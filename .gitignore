@@ -1,0 +1,14 @@
+# compiled artefacts of MetaEditor
+*.ex5
+*.ex4
+*.log
+*.bak
+
+# tester reports
+reports/
+*.htm
+*.xml
+
+# python
+__pycache__/
+*.pyc
