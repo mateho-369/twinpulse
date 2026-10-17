@@ -1,0 +1,71 @@
+# TwinPulse Hedge EA - Decisions
+
+Every ambiguity of the specification and every engineering decision is listed
+here with the reason. Where the specification was not explicit, the **more
+conservative** option was taken.
+
+| ID | Topic | Decision | Reason |
+|----|-------|----------|--------|
+| DC-0001 | Order comment | `TP\|<cycle>\|<leg>` exactly as required, e.g. `TP|12|BUY_A` | the comment is the only reliable way to rebuild the state after a restart, therefore the format is not extended |
+| DC-0002 | Money per point | The EA never uses a hard coded "0.01 lot = 0.01 USD per point". It computes the money from `SYMBOL_TRADE_TICK_VALUE` and `SYMBOL_TRADE_TICK_SIZE` | the note of the owner contains two different numbers (0.01 USD per point and 1.00 USD per 1.00 price move). On gold 0.01 lot is 1 oz, so 1.00 USD per 1.00 price move is correct. The broker values are used so that the result is right on every broker |
+| DC-0003 | "per 0.01 lot" thresholds | `CycleTargetUSD`, `MinBankUSD` and `RebalanceTolUSD` are scaled with the volume of the position: `value x (volume / 0.01)` | this is the only consistent reading of "per 0.01 lot" |
+| DC-0004 | Re-balance condition | A flat leg is re-opened when (a) the floating P/L of the **surviving opposite side** is >= `-RebalanceTolUSD` and (b) the **mirror leg of the same slot** is >= its own tolerance | the owner says "the remaining side keeps running, when it comes back to break even the closed side is re-opened"; section 4.3 says "the open side's P/L". Both are satisfied, and the second condition is the additional conservative filter |
+| DC-0005 | Lot escalation | `LotMultiplier` multiplies the lot of the **re-opened** leg: `lot = BaseLot x multiplier^generation`. With the default 1.0 there is no escalation at all | a fixed multiplier on all legs would not be a martingale, the owner explicitly wants no martingale. The escalation is only active with `IUnderstandMartingaleRisk = true` and is hard capped at 1.5 |
+| DC-0006 | Volume step rounding | The lot is rounded to the nearest volume step and then clamped to min / max / limit | a lot of 0.015 must become 0.02 on a 0.01 step, otherwise the broker rejects the order (10014) |
+| DC-0007 | Broker side take profit | **No** broker side TP. The target is managed by the EA | the "Close By" netting of section 4.2 is impossible when the server closes the winner first. The broker side **stop loss** is mandatory and always set |
+| DC-0008 | Initial stop distance | If `HardSL_ATR x ATR5` is closer than `SYMBOL_TRADE_STOPS_LEVEL`, the initial stop is pushed away to the minimum allowed distance | the broker would reject the order otherwise (10016). The stop is never widened afterwards |
+| DC-0009 | Break even stop | `entry + spread` for a BUY, `entry - spread` for a SELL | the spread has to be paid when the position is closed, a break even at the exact entry would be a small loss |
+| DC-0010 | Trailing stop | The stop follows the best price with `Trail_ATR x ATR5` distance and is never moved away from the market | the specification says "the EA never widens a stop" |
+| DC-0011 | Stop modification throttle | At most one stop modification per leg every 2 seconds | on every tick based on real ticks an unprotected trailing would send hundreds of modify requests per minute |
+| DC-0012 | `MaxTotalLots` in PERCENT mode | The cap is not raised automatically. With `RiskMode = PERCENT` the owner has to set `MaxTotalLots` to at least `4 x lot` | the cap is a hard brake, it must not be silently lifted. The default is FIXED mode, where the default 0.08 is correct |
+| DC-0013 | Basket stop | The basket stop closes the cycle and blocks new cycles until the next server day | the daily stop already pauses until the next day, the basket stop is the faster, cycle level brake. Pausing as well is the conservative choice |
+| DC-0014 | Basket target | `realized + floating >= CycleTargetUSD x (total volume / 0.01)` | the literal reading of section 4.7 with the scaling of DC-0003. With 4 x 0.01 the target is 8.00 USD, the leg targets are reached long before that, so it is a safety net |
+| DC-0015 | Bank definition | The bank is the realised money of the running cycle. Every realised profit adds to it, every realised loss (a shredded loser) takes it away | "bank = realised profit of the current cycle not yet used". A loss that is paid by the bank is a loss, the bank is the money that is still available |
+| DC-0016 | Shred condition | `bank >= |loss of one step| + spread cost`, where the spread cost is `spread x money per 1.00 price move x step volume` | exactly the rule of section 4.4. The spread cost is only a safety buffer, it is not subtracted from the bank a second time, the realised loss already contains the spread |
+| DC-0017 | Shred step | `ShredStepLot` (0.01). If the rest of the leg would fall below the broker minimum, the whole leg is closed, but only when the bank covers the full loss | the specification says exactly this |
+| DC-0018 | Close By condition | Only when both legs have **exactly the same volume** and the combined P/L >= `MinBankUSD` | MT5 closes the smaller leg and reduces the bigger one when the volumes differ, that would break the state machine |
+| DC-0019 | Close By order | The winner is the first ticket, the loser the second | `TRADE_ACTION_CLOSE_BY` closes position 1 against position 2 |
+| DC-0020 | Regime evaluation | On every **closed** M15 bar (`CopyBuffer` starts at shift 1), the ATR5 is refreshed on every closed M5 bar | a forming bar can change completely before it closes, the regime must be stable |
+| DC-0021 | Rolling median spread | The spread is sampled every `SpreadSampleSec` seconds into a buffer of 240 samples (20 minutes) and warmed up from the tick history of the last 10 minutes at start | a stable median is needed, a single tick is not a median. The effective limit is `min(2 x median, MaxSpreadPrice)` |
+| DC-0022 | Session logic | The sessions use the **server** time of the terminal (`TimeCurrent()`) | the specification says "server time" in 4.8. `ServerUTCOffsetHours` is only used to convert the calendar times (UTC) into server time |
+| DC-0023 | News filter in the tester | If `Common\Files\TwinPulse_news.csv` is missing, the news filter is switched off and the reason is logged **once** | the calendar API returns no data in the Strategy Tester, a missing file must not stop the test |
+| DC-0024 | Live news filter | The calendar is used and refreshed every 15 minutes, the CSV is only a fallback | live the calendar is available and always more complete |
+| DC-0025 | Friday flatten | Friday from 20:45 server time every open leg is closed, the cycle is written to the CSV | the gold gap on Monday is the biggest single risk of this system |
+| DC-0026 | ONE_SIDE mode | Only the side that follows the H1 trend is opened (2 legs), a new cycle starts only in a TREND regime | the mode is the control group against the hedge |
+| DC-0027 | PURE_IDEA mode | No regime filter, no bank and no shredding, but all brakes, sessions, the news filter and the time stop stay active | the mode must isolate the owner idea, not the risk management |
+| DC-0028 | `Mode` and `RiskMode` values | The enum names are prefixed (`TP_FULL`, `TP_RISK_FIXED`, ...) to avoid a clash with other MQL5 code | the specification demands that there are no duplicate identifiers between the includes |
+| DC-0029 | Panel | One background rectangle plus one multi line label | a single text object is the cheapest to update and cannot flicker |
+| DC-0030 | CSV files | The files are opened with `FILE_READ \| FILE_WRITE` and the write position is moved to the end, if the file does not exist it is created with a header | `FILE_WRITE` alone would truncate the file |
+| DC-0031 | Log file | `TwinPulse.log` in `Common\Files`, it is recycled when it is bigger than 2 MB | a growing log file would fill the disk of a VPS |
+| DC-0032 | State rebuild | The state is rebuilt from the open positions (magic + comment) and from the global variables of the terminal | after a restart, a crash or a terminal update the EA must know which legs are open. The global variables carry the cycle id, the bank and the daily baseline |
+| DC-0033 | Duplicate legs | A leg is opened only when its slot is flat, the state is the only source of truth | the specification forbids duplicated legs |
+| DC-0034 | Fills | The filling mode is read from `SYMBOL_FILLING_MODE` (FOK, then IOC, then RETURN) and `10030` triggers a retry with the next mode | error 10030 is the most common error on Exness |
+| DC-0035 | Retries | 3 attempts for 10004, 10006, 10020, 10021, 10024 and 10012 with a refreshed price, the order is dropped on 10019, 10018, 10017 and the other fatal codes | the list of the specification |
+| DC-0036 | Order check | `OrderCheck` is called before every `OrderSend` | the specification asks for it, it is free of charge and catches the volume and stop problems |
+| DC-0037 | Deviation | 30 points, configurable | the specification |
+| DC-0038 | `OnTester` | `RecoveryFactor x min(ProfitFactor, 3) x sqrt(trades / 100)`, 0 when there are less than 200 trades or the equity drawdown is above 25 % | the specification |
+| DC-0039 | `LegsPerSide` | Clamped to 1..2 in `OnInit`, so the maximum is always 4 legs | the specification says MaxLegs = 4 |
+| DC-0040 | Real account | The EA stays loaded, shows a red panel and logs the reason, but never sends an order | the specification asks for a red panel, a removed EA could not show anything |
+| DC-0041 | `ToDate` in the tester files | 2026.09.30, the last day of the month before the build date | the specification |
+| DC-0042 | News CSV format | `datetime,impact,currency,event` with the server time, written by `TwinPulseNewsExport.mq5` | the tester has no calendar, the file is the only source |
+| DC-0043 | `TimeGMT()` | Not used at all, every time logic uses `TimeCurrent()` (server time) | in the tester `TimeGMT()` follows the simulated server time, using the server time everywhere removes the risk of a wrong offset |
+| DC-0044 | Re-open cooldown | 60 seconds between two re-opens and also after the start of a cycle | the specification says 60 s since the last re-open, the same timer after a cycle start avoids an instant re-open |
+| DC-0045 | Partial close and the state | A partial close keeps the position id, the realised money is booked through the history of that position id | the difference between the cumulative and the already booked amount is the new realised money |
+| DC-0046 | Cycle id | A counter that is increased for every new cycle and stored in a global variable, the highest id found in the open positions wins after a restart | the specification asks for one cycle id per cycle |
+| DC-0047 | Swap display | The panel shows the estimated nightly cost of the open positions (`SYMBOL_SWAP_LONG` / `SYMBOL_SWAP_SHORT` x volume) | the specification asks for the swap estimate on the panel |
+| DC-0048 | The `used` flag of a leg | A leg that was never opened in the running cycle is never re-opened | otherwise a cycle could grow beyond 4 legs |
+
+## Open points for the owner
+
+1. `ServerUTCOffsetHours` is 0.0 because the owner wrote "default 0 for Exness".
+   If the Exness server time is EET (UTC+2 in winter), the news block is two
+   hours off. Check it once on the demo with a known event time.
+2. `ExecutionMode=150` in the tester files is the value of the specification.
+   If the terminal does not accept it, open the Strategy Tester, choose the
+   wanted execution mode by hand and write the value back into the `.ini` files.
+3. `CostFloorSpreadMult = 3.0` means that a target is never closer than three
+   spreads. With the typical spread of 0.20 on gold this is 0.60 price units,
+   which is larger than `0.6 x ATR5` in quiet hours. The floor is the more
+   expensive part of the target, it is the price of the cost.
+4. The forward test must run with the same `.set` file as the tester, otherwise
+   the comparison of gate 2 is meaningless.
