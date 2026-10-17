@@ -32,6 +32,8 @@
 //|  Constants, enumerations and every user input of the EA.          |
 //|  This header is included FIRST by the EA and by the self-test.     |
 //+------------------------------------------------------------------+
+#ifndef TP_CONFIG_MQH
+#define TP_CONFIG_MQH
 
 //--- identity --------------------------------------------------------
 #define TP_NAME              "TwinPulse Hedge EA"
@@ -180,6 +182,7 @@ input int    ReopenCooldownSec  = 60;             // Cooldown between two re-ope
 input group "=== TwinPulse - news ==="
 
 input bool   UseNewsFilter      = true;            // Block trading around high impact USD news
+input string NewsCurrency        = "USD";           // Currency used by the high-impact news filter
 input int    NewsMinutesBefore  = 15;             // Block N minutes before the event (0..60)
 input int    NewsMinutesAfter   = 15;             // Block N minutes after the event (0..60)
 input string NewsCsvFile        = TP_NEWS_CSV;    // CSV file with exported events (Common\Files)
@@ -247,6 +250,8 @@ bool TP_UseBank(void)
 //+------------------------------------------------------------------+
 //| end of file                                                       |
 //+------------------------------------------------------------------+
+
+#endif // TP_CONFIG_MQH
 //+--- end MQL5/Include/TwinPulse/Config.mqh ---------------------------
 //+--- begin MQL5/Include/TwinPulse/Utils.mqh ----------------------------
 //+------------------------------------------------------------------+
@@ -256,11 +261,13 @@ bool TP_UseBank(void)
 //|  Everything in here is side effect free so the self test can use  |
 //|  it on synthetic data.                                             |
 //+------------------------------------------------------------------+
+#ifndef TP_UTILS_MQH
+#define TP_UTILS_MQH
 
-#include <Trade/Trade.mqh>
-#include <Trade/PositionInfo.mqh>
-#include <Trade/SymbolInfo.mqh>
-#include <Trade/AccountInfo.mqh>
+#include <Trade\Trade.mqh>
+#include <Trade\PositionInfo.mqh>
+#include <Trade\SymbolInfo.mqh>
+#include <Trade\AccountInfo.mqh>
 
 //--- shared terminal objects (one EA instance per symbol / magic) -----
 CTrade       g_trade;
@@ -271,6 +278,7 @@ CAccountInfo g_acc;
 //--- EA wide identifiers ----------------------------------------------
 string g_symbol = "";
 long   g_magic  = TP_MAGIC_DEFAULT;
+int    g_legsPerSide = 2;
 int    g_digits = 3;
 double g_point  = 0.001;
 
@@ -507,6 +515,21 @@ string TP_MakeComment(const int cycleId, const int legIndex)
   }
 
 //+------------------------------------------------------------------+
+//| TP_IsDigits - true when a string contains one or more decimal digits|
+//+------------------------------------------------------------------+
+bool TP_IsDigits(const string text)
+  {
+   int length = StringLen(text);
+   if(length <= 0) return false;
+   for(int i = 0; i < length; i++)
+     {
+      ushort ch = StringGetCharacter(text, i);
+      if(ch < '0' || ch > '9') return false;
+     }
+   return true;
+  }
+
+//+------------------------------------------------------------------+
 //| TP_ParseComment - read cycle id and leg index from a comment       |
 //+------------------------------------------------------------------+
 bool TP_ParseComment(const string comment, int &cycleId, int &legIndex)
@@ -523,10 +546,10 @@ bool TP_ParseComment(const string comment, int &cycleId, int &legIndex)
    string cycStr = StringSubstr(rest, 0, sep);
    string legStr = StringSubstr(rest, sep + 1);
 
-   if(!StringIsInteger(cycStr)) return false;
+   if(!TP_IsDigits(cycStr)) return false;
    legIndex = TP_LegIndexFromName(legStr);
    if(legIndex < 0) return false;
-   cycleId = StringToInteger(cycStr);
+   cycleId = (int)StringToInteger(cycStr);
    return true;
   }
 
@@ -537,7 +560,7 @@ int TP_DayStamp(const datetime t)
   {
    MqlDateTime dt;
    TimeToStruct(t, dt);
-   return dt.year * 10000 + dt.month * 100 + dt.day;
+   return dt.year * 10000 + dt.mon * 100 + dt.day;
   }
 
 //+------------------------------------------------------------------+
@@ -605,6 +628,8 @@ bool TP_IsFriday(const datetime t)
   {
    return (TP_ServerDayOfWeek(t) == 5);
   }
+
+#endif // TP_UTILS_MQH
 //+--- end MQL5/Include/TwinPulse/Utils.mqh ----------------------------
 //+--- begin MQL5/Include/TwinPulse/Logger.mqh ---------------------------
 //+------------------------------------------------------------------+
@@ -612,9 +637,11 @@ bool TP_IsFriday(const datetime t)
 //|  TwinPulse Hedge EA                                                 |
 //|  Console output + rotating text log in Common\Files                |
 //+------------------------------------------------------------------+
+#ifndef TP_LOGGER_MQH
+#define TP_LOGGER_MQH
 
-// (already inlined) #include "Config.mqh"
-// (already inlined) #include "Utils.mqh"
+// (already inlined) project header: Config.mqh
+// (already inlined) project header: Utils.mqh
 
 #define TP_LOG_MAX_BYTES  2097152     // 2 MB, then the log file is recycled
 
@@ -636,7 +663,7 @@ void TP_LogFileWrite(const string line)
 
    if(FileSize(handle) > TP_LOG_MAX_BYTES)
      {
-      FileClose(handle);
+      FileClose((int)handle);
       FileDelete(TP_LOG_FILE, FILE_COMMON);
       handle = FileOpen(TP_LOG_FILE, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ, 0, FILE_COMMON);
       if(handle == INVALID_HANDLE) return;
@@ -645,7 +672,7 @@ void TP_LogFileWrite(const string line)
 
    FileSeek(handle, 0, SEEK_END);
    FileWriteString(handle, line + "\n");
-   FileClose(handle);
+   FileClose((int)handle);
   }
 
 //+------------------------------------------------------------------+
@@ -666,9 +693,9 @@ void TP_Log(const string level, const string message)
       return;
      }
 
-   string line = StringFormat("%s | %s | %s | %s | %s",
+   string line = StringFormat("%s | %s | %s | %d | %s",
                               TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS),
-                              level, g_symbol, g_magic, message);
+                              level, g_symbol, (int)g_magic, message);
    Print(line);
    TP_LogFileWrite(StringFormat("%s,%s,%s,%d,%s",
                                 TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS),
@@ -711,7 +738,7 @@ void TP_CsvAppend(const string fileName, const string header, const string line)
 
    FileSeek(handle, 0, SEEK_END);
    FileWriteString(handle, line + "\n");
-   FileClose(handle);
+   FileClose((int)handle);
   }
 
 //+------------------------------------------------------------------+
@@ -753,6 +780,8 @@ void TP_LogCycleCSV(const int cycleId, const datetime startTime, const datetime 
                 "time,cycle_id,start_time,end_time,regime,legs_opened,legs_closed,realized,bank,shredded,reason,spread,atr5",
                 line);
   }
+
+#endif // TP_LOGGER_MQH
 //+--- end MQL5/Include/TwinPulse/Logger.mqh ---------------------------
 //+--- begin MQL5/Include/TwinPulse/State.mqh ----------------------------
 //+------------------------------------------------------------------+
@@ -760,9 +789,11 @@ void TP_LogCycleCSV(const int cycleId, const datetime startTime, const datetime 
 //|  TwinPulse Hedge EA                                                 |
 //|  Runtime state of the EA plus rebuild from the open positions.     |
 //+------------------------------------------------------------------+
+#ifndef TP_STATE_MQH
+#define TP_STATE_MQH
 
-// (already inlined) #include "Config.mqh"
-// (already inlined) #include "Utils.mqh"
+// (already inlined) project header: Config.mqh
+// (already inlined) project header: Utils.mqh
 
 //--- state of one leg of the current cycle ----------------------------
 struct TpLegState
@@ -1137,6 +1168,8 @@ double TP_State_RealizedForPosition(const ulong positionId, const datetime fromT
 
    return sum;
   }
+
+#endif // TP_STATE_MQH
 //+--- end MQL5/Include/TwinPulse/State.mqh ----------------------------
 //+--- begin MQL5/Include/TwinPulse/News.mqh -----------------------------
 //+------------------------------------------------------------------+
@@ -1147,11 +1180,13 @@ double TP_State_RealizedForPosition(const ulong positionId, const datetime fromT
 //|   * Tester: Common\Files\TwinPulse_news.csv written by the        |
 //|             script TwinPulseNewsExport.mq5                        |
 //+------------------------------------------------------------------+
+#ifndef TP_NEWS_MQH
+#define TP_NEWS_MQH
 
-// (already inlined) #include "Config.mqh"
-// (already inlined) #include "Utils.mqh"
-// (already inlined) #include "Logger.mqh"
-// (already inlined) #include "State.mqh"
+// (already inlined) project header: Config.mqh
+// (already inlined) project header: Utils.mqh
+// (already inlined) project header: Logger.mqh
+// (already inlined) project header: State.mqh
 
 //--- news cache -------------------------------------------------------
 datetime g_newsTimes[];        // sorted event times (server time)
@@ -1232,7 +1267,7 @@ bool TP_News_LoadCsv(void)
       g_newsTimes[size] = t;
       rows++;
      }
-   FileClose(handle);
+   FileClose((int)handle);
 
    g_newsCsvFound = true;
    g_newsLoaded   = true;
@@ -1376,6 +1411,8 @@ string TP_News_Status(void)
    if(g_tp.newsBlock) return "BLOCKED";
    return "CLEAR";
   }
+
+#endif // TP_NEWS_MQH
 //+--- end MQL5/Include/TwinPulse/News.mqh -----------------------------
 //+--- begin MQL5/Include/TwinPulse/Execution.mqh ------------------------
 //+------------------------------------------------------------------+
@@ -1385,11 +1422,13 @@ string TP_News_Status(void)
 //|  closes and stop modifications.  Every order is checked with       |
 //|  OrderCheck and sent with bounded retries.                         |
 //+------------------------------------------------------------------+
+#ifndef TP_EXECUTION_MQH
+#define TP_EXECUTION_MQH
 
-// (already inlined) #include "Config.mqh"
-// (already inlined) #include "Utils.mqh"
-// (already inlined) #include "Logger.mqh"
-// (already inlined) #include "State.mqh"
+// (already inlined) project header: Config.mqh
+// (already inlined) project header: Utils.mqh
+// (already inlined) project header: Logger.mqh
+// (already inlined) project header: State.mqh
 
 //+------------------------------------------------------------------+
 //| TP_Exec_FillingMode - filling mode accepted by the broker         |
@@ -1401,9 +1440,9 @@ ENUM_ORDER_TYPE_FILLING TP_Exec_FillingMode(void)
       return ORDER_FILLING_FOK;
    if((filling & SYMBOL_FILLING_IOC) == SYMBOL_FILLING_IOC)
       return ORDER_FILLING_IOC;
-   if((filling & SYMBOL_FILLING_RETURN) == SYMBOL_FILLING_RETURN)
-      return ORDER_FILLING_RETURN;
-   return ORDER_FILLING_IOC;
+   // ORDER_FILLING_RETURN is the documented fallback when the symbol
+   // exposes neither of the market filling flags.
+   return ORDER_FILLING_RETURN;
   }
 
 //+------------------------------------------------------------------+
@@ -1512,7 +1551,7 @@ bool TP_Exec_SendRequest(MqlTradeRequest &request, MqlTradeResult &result, const
          if(rc == 0 || rc == TRADE_RETCODE_DONE || rc == TRADE_RETCODE_DONE_PARTIAL || rc == TRADE_RETCODE_PLACED)
             return true;
 
-         if(rc == TRADE_RETCODE_FILL_REQUIRED)
+         if(rc == TRADE_RETCODE_INVALID_FILL)
            {
             // retry with the next filling mode
             if(request.type_filling == ORDER_FILLING_FOK)
@@ -1608,8 +1647,8 @@ bool TP_Exec_OpenLeg(const int legIndex, const double volume, const double sl, c
    request.type_filling = TP_Exec_FillingMode();
    request.type_time    = ORDER_TIME_GTC;
 
-   if(slPrice > 0.0) request.stoploss = slPrice;
-   if(tp > 0.0)      request.takeprofit = TP_Exec_NormalizePrice(tp);
+   if(slPrice > 0.0) request.sl = slPrice;
+   if(tp > 0.0)      request.tp = TP_Exec_NormalizePrice(tp);
 
    //--- a position must never be opened without a stop loss ---------
    if(slPrice <= 0.0)
@@ -1622,7 +1661,7 @@ bool TP_Exec_OpenLeg(const int legIndex, const double volume, const double sl, c
       double dist = HardSL_ATR * g_tp.atr5;
       if(dist < minDist) dist = minDist;
       slPrice = TP_Exec_NormalizePrice(isBuy ? (price - dist) : (price + dist));
-      request.stoploss = slPrice;
+      request.sl = slPrice;
      }
 
    if(!TP_Exec_FreeMarginOk(request.type, volume, price))
@@ -1761,6 +1800,8 @@ bool TP_Exec_ModifySL(const ulong ticket, const double newSl, const double newTp
      }
    return true;
   }
+
+#endif // TP_EXECUTION_MQH
 //+--- end MQL5/Include/TwinPulse/Execution.mqh ------------------------
 //+--- begin MQL5/Include/TwinPulse/Risk.mqh -----------------------------
 //+------------------------------------------------------------------+
@@ -1768,12 +1809,14 @@ bool TP_Exec_ModifySL(const ulong ticket, const double newSl, const double newTp
 //|  TwinPulse Hedge EA                                                 |
 //|  Brakes, session filters, spread control and margin checks.        |
 //+------------------------------------------------------------------+
+#ifndef TP_RISK_MQH
+#define TP_RISK_MQH
 
-// (already inlined) #include "Config.mqh"
-// (already inlined) #include "Utils.mqh"
-// (already inlined) #include "Logger.mqh"
-// (already inlined) #include "State.mqh"
-// (already inlined) #include "Execution.mqh"
+// (already inlined) project header: Config.mqh
+// (already inlined) project header: Utils.mqh
+// (already inlined) project header: Logger.mqh
+// (already inlined) project header: State.mqh
+// (already inlined) project header: Execution.mqh
 
 //+------------------------------------------------------------------+
 //| TP_Risk_InitSpreadSamples - warm up the rolling median spread     |
@@ -1786,7 +1829,8 @@ void TP_Risk_InitSpreadSamples(void)
 
    datetime from = TimeCurrent() - 600;
    MqlTick ticks[];
-   int got = CopyTicksRange(g_symbol, PERIOD_M1, from, TimeCurrent(), ticks);
+   int got = CopyTicksRange(g_symbol, ticks, COPY_TICKS_ALL,
+                            (ulong)from * 1000, (ulong)TimeCurrent() * 1000);
    if(got > 0)
      {
       int step = got / 100;
@@ -2021,6 +2065,8 @@ string TP_Risk_SwapModeText(void)
    if(mode == 1) return "currency";
    return "interest";
   }
+
+#endif // TP_RISK_MQH
 //+--- end MQL5/Include/TwinPulse/Risk.mqh -----------------------------
 //+--- begin MQL5/Include/TwinPulse/Regime.mqh ---------------------------
 //+------------------------------------------------------------------+
@@ -2029,13 +2075,15 @@ string TP_Risk_SwapModeText(void)
 //|  Deterministic market regime detection, evaluated on closed M15    |
 //|  bars.  The pure classifier is unit tested by TwinPulseSelfTest.   |
 //+------------------------------------------------------------------+
+#ifndef TP_REGIME_MQH
+#define TP_REGIME_MQH
 
-// (already inlined) #include "Config.mqh"
-// (already inlined) #include "Utils.mqh"
-// (already inlined) #include "Logger.mqh"
-// (already inlined) #include "State.mqh"
-// (already inlined) #include "Execution.mqh"
-// (already inlined) #include "Risk.mqh"
+// (already inlined) project header: Config.mqh
+// (already inlined) project header: Utils.mqh
+// (already inlined) project header: Logger.mqh
+// (already inlined) project header: State.mqh
+// (already inlined) project header: Execution.mqh
+// (already inlined) project header: Risk.mqh
 
 //--- indicator handles -------------------------------------------------
 int g_hAtr5    = INVALID_HANDLE;   // ATR(14) M5
@@ -2321,6 +2369,8 @@ void TP_Regime_Update(void)
      }
    g_tp.regime = regime;
   }
+
+#endif // TP_REGIME_MQH
 //+--- end MQL5/Include/TwinPulse/Regime.mqh ---------------------------
 //+--- begin MQL5/Include/TwinPulse/Bank.mqh -----------------------------
 //+------------------------------------------------------------------+
@@ -2333,12 +2383,14 @@ void TP_Regime_Update(void)
 //|          losing leg, so the counter trend leg dies with a small   |
 //|          controlled loss instead of running into the hard stop.    |
 //+------------------------------------------------------------------+
+#ifndef TP_BANK_MQH
+#define TP_BANK_MQH
 
-// (already inlined) #include "Config.mqh"
-// (already inlined) #include "Utils.mqh"
-// (already inlined) #include "Logger.mqh"
-// (already inlined) #include "State.mqh"
-// (already inlined) #include "Execution.mqh"
+// (already inlined) project header: Config.mqh
+// (already inlined) project header: Utils.mqh
+// (already inlined) project header: Logger.mqh
+// (already inlined) project header: State.mqh
+// (already inlined) project header: Execution.mqh
 
 //+------------------------------------------------------------------+
 //| TP_Bank_ShredCost - bank needed to shred one step                 |
@@ -2467,6 +2519,8 @@ bool TP_Bank_TryShred(void)
    TP_State_Save();
    return true;
   }
+
+#endif // TP_BANK_MQH
 //+--- end MQL5/Include/TwinPulse/Bank.mqh -----------------------------
 //+--- begin MQL5/Include/TwinPulse/Legs.mqh -----------------------------
 //+------------------------------------------------------------------+
@@ -2475,15 +2529,17 @@ bool TP_Bank_TryShred(void)
 //|  The heart of the EA: the four legs of a cycle, their targets,     |
 //|  the re-balance rule of the owner and the cycle level exits.       |
 //+------------------------------------------------------------------+
+#ifndef TP_LEGS_MQH
+#define TP_LEGS_MQH
 
-// (already inlined) #include "Config.mqh"
-// (already inlined) #include "Utils.mqh"
-// (already inlined) #include "Logger.mqh"
-// (already inlined) #include "State.mqh"
-// (already inlined) #include "Execution.mqh"
-// (already inlined) #include "Risk.mqh"
-// (already inlined) #include "Regime.mqh"
-// (already inlined) #include "Bank.mqh"
+// (already inlined) project header: Config.mqh
+// (already inlined) project header: Utils.mqh
+// (already inlined) project header: Logger.mqh
+// (already inlined) project header: State.mqh
+// (already inlined) project header: Execution.mqh
+// (already inlined) project header: Risk.mqh
+// (already inlined) project header: Regime.mqh
+// (already inlined) project header: Bank.mqh
 
 //--- forward declarations ---------------------------------------------
 void TP_Legs_Update(void);
@@ -3036,7 +3092,7 @@ void TP_Legs_TryRebalance(void)
 
    int openBuy  = TP_State_CountOpenLegs(TP_SIDE_BUY);
    int openSell = TP_State_CountOpenLegs(TP_SIDE_SELL);
-   int wanted   = LegsPerSide;
+   int wanted   = g_legsPerSide;
 
    bool sideMissing = (openBuy < wanted) || (openSell < wanted);
    if(!sideMissing) return;
@@ -3111,6 +3167,8 @@ void TP_Legs_CloseCycle(const string reason)
    g_tp.closedLegs    = 0;
    TP_State_Save();
   }
+
+#endif // TP_LEGS_MQH
 //+--- end MQL5/Include/TwinPulse/Legs.mqh -----------------------------
 //+--- begin MQL5/Include/TwinPulse/Panel.mqh ----------------------------
 //+------------------------------------------------------------------+
@@ -3118,15 +3176,17 @@ void TP_Legs_CloseCycle(const string reason)
 //|  TwinPulse Hedge EA                                                 |
 //|  On chart panel with the state of the EA, the legs and the brakes. |
 //+------------------------------------------------------------------+
+#ifndef TP_PANEL_MQH
+#define TP_PANEL_MQH
 
-// (already inlined) #include "Config.mqh"
-// (already inlined) #include "Utils.mqh"
-// (already inlined) #include "Logger.mqh"
-// (already inlined) #include "State.mqh"
-// (already inlined) #include "Execution.mqh"
-// (already inlined) #include "Risk.mqh"
-// (already inlined) #include "Regime.mqh"
-// (already inlined) #include "News.mqh"
+// (already inlined) project header: Config.mqh
+// (already inlined) project header: Utils.mqh
+// (already inlined) project header: Logger.mqh
+// (already inlined) project header: State.mqh
+// (already inlined) project header: Execution.mqh
+// (already inlined) project header: Risk.mqh
+// (already inlined) project header: Regime.mqh
+// (already inlined) project header: News.mqh
 
 #define TP_PANEL_BG   TP_PANEL_PREFIX + "BG"
 #define TP_PANEL_TXT  TP_PANEL_PREFIX + "TXT"
@@ -3256,6 +3316,8 @@ void TP_Panel_Update(void)
 
    ChartRedraw(0);
   }
+
+#endif // TP_PANEL_MQH
 //+--- end MQL5/Include/TwinPulse/Panel.mqh ----------------------------
 
 //--- bar trackers -----------------------------------------------------
@@ -3271,6 +3333,7 @@ int OnInit()
   {
    g_symbol = _Symbol;
    g_magic  = Magic;
+   g_legsPerSide = LegsPerSide;
 
    if(!SymbolSelect(g_symbol, true))
      {
@@ -3292,8 +3355,8 @@ int OnInit()
       Print("TwinPulse: LotMultiplier > 1.0 needs IUnderstandMartingaleRisk = true, the multiplier is reset to 1.0.");
       }
 
-   if(LegsPerSide < 1) LegsPerSide = 1;
-   if(LegsPerSide > 2) LegsPerSide = 2;
+   if(g_legsPerSide < 1) g_legsPerSide = 1;
+   if(g_legsPerSide > 2) g_legsPerSide = 2;
 
    //--- trade objects -------------------------------------------------
    g_trade.SetExpertMagicNumber((ulong)g_magic);
@@ -3552,7 +3615,7 @@ double OnTester()
    double trades = TesterStatistics(STAT_TRADES);
    double pf     = TesterStatistics(STAT_PROFIT_FACTOR);
    double rf     = TesterStatistics(STAT_RECOVERY_FACTOR);
-   double dd     = TesterStatistics(STAT_EQUITY_DRAWDOWN_PERCENT);
+   double dd     = TesterStatistics(STAT_EQUITY_DDREL_PERCENT);
 
    if(trades < 200.0 || dd > 25.0)
       return 0.0;
