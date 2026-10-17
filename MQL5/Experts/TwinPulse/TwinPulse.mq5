@@ -41,6 +41,7 @@ int OnInit()
   {
    g_symbol = _Symbol;
    g_magic  = Magic;
+   g_legsPerSide = LegsPerSide;
 
    if(!SymbolSelect(g_symbol, true))
      {
@@ -62,8 +63,8 @@ int OnInit()
       Print("TwinPulse: LotMultiplier > 1.0 needs IUnderstandMartingaleRisk = true, the multiplier is reset to 1.0.");
       }
 
-   if(LegsPerSide < 1) LegsPerSide = 1;
-   if(LegsPerSide > 2) LegsPerSide = 2;
+   if(g_legsPerSide < 1) g_legsPerSide = 1;
+   if(g_legsPerSide > 2) g_legsPerSide = 2;
 
    //--- trade objects -------------------------------------------------
    g_trade.SetExpertMagicNumber((ulong)g_magic);
@@ -322,7 +323,7 @@ double OnTester()
    double trades = TesterStatistics(STAT_TRADES);
    double pf     = TesterStatistics(STAT_PROFIT_FACTOR);
    double rf     = TesterStatistics(STAT_RECOVERY_FACTOR);
-   double dd     = TesterStatistics(STAT_EQUITY_DRAWDOWN_PERCENT);
+   double dd     = TesterStatistics(STAT_EQUITY_DDREL_PERCENT);
 
    if(trades < 200.0 || dd > 25.0)
       return 0.0;

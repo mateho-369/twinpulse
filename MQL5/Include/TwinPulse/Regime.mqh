@@ -4,7 +4,8 @@
 //|  Deterministic market regime detection, evaluated on closed M15    |
 //|  bars.  The pure classifier is unit tested by TwinPulseSelfTest.   |
 //+------------------------------------------------------------------+
-#pragma once
+#ifndef TP_REGIME_MQH
+#define TP_REGIME_MQH
 
 #include "Config.mqh"
 #include "Utils.mqh"
@@ -297,3 +298,5 @@ void TP_Regime_Update(void)
      }
    g_tp.regime = regime;
   }
+
+#endif // TP_REGIME_MQH

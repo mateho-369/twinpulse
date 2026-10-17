@@ -4,7 +4,8 @@
 //|  The heart of the EA: the four legs of a cycle, their targets,     |
 //|  the re-balance rule of the owner and the cycle level exits.       |
 //+------------------------------------------------------------------+
-#pragma once
+#ifndef TP_LEGS_MQH
+#define TP_LEGS_MQH
 
 #include "Config.mqh"
 #include "Utils.mqh"
@@ -566,7 +567,7 @@ void TP_Legs_TryRebalance(void)
 
    int openBuy  = TP_State_CountOpenLegs(TP_SIDE_BUY);
    int openSell = TP_State_CountOpenLegs(TP_SIDE_SELL);
-   int wanted   = LegsPerSide;
+   int wanted   = g_legsPerSide;
 
    bool sideMissing = (openBuy < wanted) || (openSell < wanted);
    if(!sideMissing) return;
@@ -641,3 +642,5 @@ void TP_Legs_CloseCycle(const string reason)
    g_tp.closedLegs    = 0;
    TP_State_Save();
   }
+
+#endif // TP_LEGS_MQH

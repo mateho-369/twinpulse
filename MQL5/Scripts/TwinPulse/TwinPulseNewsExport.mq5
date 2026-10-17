@@ -38,7 +38,7 @@ void OnStart()
    if(to <= from)
      {
       Print("TwinPulseNewsExport: the end time is before the start time.");
-      FileClose(handle);
+      FileClose((int)handle);
       return;
      }
 
@@ -68,12 +68,16 @@ void OnStart()
             if(!CalendarEventById(values[i].event_id, ev)) continue;
             if((int)ev.importance != (int)CALENDAR_IMPORTANCE_HIGH) continue;
 
+            MqlCalendarCountry country;
+            if(!CalendarCountryById((long)ev.country_id, country)) continue;
+
             string name = ev.name;
+            string currency = country.currency;
             StringReplace(name, ",", " ");
 
             string line = StringFormat("%s,HIGH,%s,%s",
                                        TimeToString(TP_News_UtcToServer(values[i].time), TIME_DATE | TIME_MINUTES),
-                                       ev.currency, name);
+                                       currency, name);
             FileWriteString(handle, line + "\n");
             written++;
            }
@@ -82,7 +86,7 @@ void OnStart()
       cursor = chunkEnd + 60;
      }
 
-   FileClose(handle);
+   FileClose((int)handle);
 
    Print("=====================================================");
    Print("  TwinPulse news export finished");

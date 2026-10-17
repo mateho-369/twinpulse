@@ -4,7 +4,8 @@
 //|  Constants, enumerations and every user input of the EA.          |
 //|  This header is included FIRST by the EA and by the self-test.     |
 //+------------------------------------------------------------------+
-#pragma once
+#ifndef TP_CONFIG_MQH
+#define TP_CONFIG_MQH
 
 //--- identity --------------------------------------------------------
 #define TP_NAME              "TwinPulse Hedge EA"
@@ -153,6 +154,7 @@ input int    ReopenCooldownSec  = 60;             // Cooldown between two re-ope
 input group "=== TwinPulse - news ==="
 
 input bool   UseNewsFilter      = true;            // Block trading around high impact USD news
+input string NewsCurrency        = "USD";           // Currency used by the high-impact news filter
 input int    NewsMinutesBefore  = 15;             // Block N minutes before the event (0..60)
 input int    NewsMinutesAfter   = 15;             // Block N minutes after the event (0..60)
 input string NewsCsvFile        = TP_NEWS_CSV;    // CSV file with exported events (Common\Files)
@@ -220,3 +222,5 @@ bool TP_UseBank(void)
 //+------------------------------------------------------------------+
 //| end of file                                                       |
 //+------------------------------------------------------------------+
+
+#endif // TP_CONFIG_MQH

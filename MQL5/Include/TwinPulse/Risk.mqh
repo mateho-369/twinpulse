@@ -3,7 +3,8 @@
 //|  TwinPulse Hedge EA                                                 |
 //|  Brakes, session filters, spread control and margin checks.        |
 //+------------------------------------------------------------------+
-#pragma once
+#ifndef TP_RISK_MQH
+#define TP_RISK_MQH
 
 #include "Config.mqh"
 #include "Utils.mqh"
@@ -22,7 +23,8 @@ void TP_Risk_InitSpreadSamples(void)
 
    datetime from = TimeCurrent() - 600;
    MqlTick ticks[];
-   int got = CopyTicksRange(g_symbol, PERIOD_M1, from, TimeCurrent(), ticks);
+   int got = CopyTicksRange(g_symbol, ticks, COPY_TICKS_ALL,
+                            (ulong)from * 1000, (ulong)TimeCurrent() * 1000);
    if(got > 0)
      {
       int step = got / 100;
@@ -257,3 +259,5 @@ string TP_Risk_SwapModeText(void)
    if(mode == 1) return "currency";
    return "interest";
   }
+
+#endif // TP_RISK_MQH

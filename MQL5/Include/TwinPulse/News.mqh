@@ -6,7 +6,8 @@
 //|   * Tester: Common\Files\TwinPulse_news.csv written by the        |
 //|             script TwinPulseNewsExport.mq5                        |
 //+------------------------------------------------------------------+
-#pragma once
+#ifndef TP_NEWS_MQH
+#define TP_NEWS_MQH
 
 #include "Config.mqh"
 #include "Utils.mqh"
@@ -92,7 +93,7 @@ bool TP_News_LoadCsv(void)
       g_newsTimes[size] = t;
       rows++;
      }
-   FileClose(handle);
+   FileClose((int)handle);
 
    g_newsCsvFound = true;
    g_newsLoaded   = true;
@@ -236,3 +237,5 @@ string TP_News_Status(void)
    if(g_tp.newsBlock) return "BLOCKED";
    return "CLEAR";
   }
+
+#endif // TP_NEWS_MQH

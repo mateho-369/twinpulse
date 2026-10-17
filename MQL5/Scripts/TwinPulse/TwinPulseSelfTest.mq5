@@ -267,6 +267,9 @@ void Test_Comment(void)
             TP_ParseComment(TP_MakeComment(7, TP_LEG_BUY_A), cycleId, legIdx));
    TP_Check("the cycle id survives", cycleId == 7);
    TP_Check("the leg index survives", legIdx == TP_LEG_BUY_A);
+   TP_Check("cycle ids accept only decimal digits",
+            TP_IsDigits("26101701") && !TP_IsDigits("26x01701") &&
+            !TP_IsDigits("") && !TP_IsDigits("-7"));
    TP_Check("a foreign comment is rejected",
             !TP_ParseComment("OTHER|7|BUY_A", cycleId, legIdx));
    TP_Check("a broken comment is rejected",

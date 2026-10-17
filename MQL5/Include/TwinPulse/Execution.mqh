@@ -5,7 +5,8 @@
 //|  closes and stop modifications.  Every order is checked with       |
 //|  OrderCheck and sent with bounded retries.                         |
 //+------------------------------------------------------------------+
-#pragma once
+#ifndef TP_EXECUTION_MQH
+#define TP_EXECUTION_MQH
 
 #include "Config.mqh"
 #include "Utils.mqh"
@@ -22,9 +23,9 @@ ENUM_ORDER_TYPE_FILLING TP_Exec_FillingMode(void)
       return ORDER_FILLING_FOK;
    if((filling & SYMBOL_FILLING_IOC) == SYMBOL_FILLING_IOC)
       return ORDER_FILLING_IOC;
-   if((filling & SYMBOL_FILLING_RETURN) == SYMBOL_FILLING_RETURN)
-      return ORDER_FILLING_RETURN;
-   return ORDER_FILLING_IOC;
+   // ORDER_FILLING_RETURN is the documented fallback when the symbol
+   // exposes neither of the market filling flags.
+   return ORDER_FILLING_RETURN;
   }
 
 //+------------------------------------------------------------------+
@@ -133,7 +134,7 @@ bool TP_Exec_SendRequest(MqlTradeRequest &request, MqlTradeResult &result, const
          if(rc == 0 || rc == TRADE_RETCODE_DONE || rc == TRADE_RETCODE_DONE_PARTIAL || rc == TRADE_RETCODE_PLACED)
             return true;
 
-         if(rc == TRADE_RETCODE_FILL_REQUIRED)
+         if(rc == TRADE_RETCODE_INVALID_FILL)
            {
             // retry with the next filling mode
             if(request.type_filling == ORDER_FILLING_FOK)
@@ -229,8 +230,8 @@ bool TP_Exec_OpenLeg(const int legIndex, const double volume, const double sl, c
    request.type_filling = TP_Exec_FillingMode();
    request.type_time    = ORDER_TIME_GTC;
 
-   if(slPrice > 0.0) request.stoploss = slPrice;
-   if(tp > 0.0)      request.takeprofit = TP_Exec_NormalizePrice(tp);
+   if(slPrice > 0.0) request.sl = slPrice;
+   if(tp > 0.0)      request.tp = TP_Exec_NormalizePrice(tp);
 
    //--- a position must never be opened without a stop loss ---------
    if(slPrice <= 0.0)
@@ -243,7 +244,7 @@ bool TP_Exec_OpenLeg(const int legIndex, const double volume, const double sl, c
       double dist = HardSL_ATR * g_tp.atr5;
       if(dist < minDist) dist = minDist;
       slPrice = TP_Exec_NormalizePrice(isBuy ? (price - dist) : (price + dist));
-      request.stoploss = slPrice;
+      request.sl = slPrice;
      }
 
    if(!TP_Exec_FreeMarginOk(request.type, volume, price))
@@ -382,3 +383,5 @@ bool TP_Exec_ModifySL(const ulong ticket, const double newSl, const double newTp
      }
    return true;
   }
+
+#endif // TP_EXECUTION_MQH

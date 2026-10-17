@@ -8,7 +8,8 @@
 //|          losing leg, so the counter trend leg dies with a small   |
 //|          controlled loss instead of running into the hard stop.    |
 //+------------------------------------------------------------------+
-#pragma once
+#ifndef TP_BANK_MQH
+#define TP_BANK_MQH
 
 #include "Config.mqh"
 #include "Utils.mqh"
@@ -143,3 +144,5 @@ bool TP_Bank_TryShred(void)
    TP_State_Save();
    return true;
   }
+
+#endif // TP_BANK_MQH
