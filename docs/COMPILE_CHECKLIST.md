@@ -128,6 +128,8 @@ before he uses the EA.
 | I10 | Calendar IDs are explicitly cast to the documented API parameter type; magic/log integer formatting uses explicit casts | NewsExport, Logger | OK |
 | I11 | `CopyTicksRange` receives `MqlTick[]`, flags, and millisecond timestamps in documented argument order | Risk | OK |
 | I12 | Self-test covers digit-only validation; single-file generation checks for active project includes and unsupported pragmas | SelfTest, builder | OK |
+| I13 | `CPositionInfo` calls use the documented `StopLoss()`, `TakeProfit()`, `PositionType()` and `SelectByTicket()` methods; audited project calls on CTrade/CPositionInfo/CSymbolInfo/COrderInfo/CDealInfo against the Standard Library reference | Execution, all MQL sources | OK |
+| I14 | `MqlTradeTransaction` is not read for a `magic` member; deal additions are gated with `HistoryDealSelect`/`DEAL_MAGIC`, and position updates with `PositionSelectByTicket`/`POSITION_MAGIC` | TwinPulse `OnTradeTransaction` | OK |
 
 The compile log supplied by the owner also named ambiguous calls at `FileClose`/`StringFormat` locations. The modular source contains no project declaration named `FileClose` or `FileWrite`; those are built-in calls. The invalid preprocessor directive had caused parser cascades at the same locations. The export now makes the calendar currency and ID types explicit, and Logger formats the magic as an explicitly cast integer.
 
