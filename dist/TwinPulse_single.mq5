@@ -40,6 +40,7 @@
 #define TP_VER               "1.00"
 #define TP_COMMENT_PREFIX    "TP"
 #define TP_MAGIC_DEFAULT     26101701
+#define TP_MONEY_EPSILON     1.0e-9
 #define TP_LEG_COUNT         4          // BUY_A, BUY_B, SELL_A, SELL_B
 #define TP_SLOT_COUNT        2          // slot A, slot B
 #define TP_SPREAD_SAMPLES    240        // rolling buffer for the median spread
@@ -299,6 +300,24 @@ double TP_SafeDiv(const double num, const double den, const double fallback)
   {
    if(MathAbs(den) < 1e-12) return fallback;
    return num / den;
+  }
+
+//+------------------------------------------------------------------+
+//| Money comparisons with a tiny binary floating-point tolerance    |
+//+------------------------------------------------------------------+
+bool TP_MoneyGE(const double value, const double threshold)
+  {
+   return (value >= threshold || MathAbs(value - threshold) <= TP_MONEY_EPSILON);
+  }
+
+bool TP_MoneyLE(const double value, const double threshold)
+  {
+   return (value <= threshold || MathAbs(value - threshold) <= TP_MONEY_EPSILON);
+  }
+
+bool TP_MoneyNearZero(const double value)
+  {
+   return (MathAbs(value) <= TP_MONEY_EPSILON);
   }
 
 //+------------------------------------------------------------------+
@@ -2013,7 +2032,7 @@ bool TP_Risk_BasketStopHit(void)
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    if(equity <= 0.0) return false;
    double limit = -(equity * BasketStopPct / 100.0);
-   return (TP_State_CycleTotal() <= limit);
+   return TP_MoneyLE(TP_State_CycleTotal(), limit);
   }
 
 //+------------------------------------------------------------------+
@@ -2024,7 +2043,7 @@ bool TP_Risk_DailyStopHit(void)
    if(g_tp.dayStartEquity <= 0.0) return false;
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    double limit  = g_tp.dayStartEquity * (1.0 - DailyStopPct / 100.0);
-   return (equity <= limit);
+   return TP_MoneyLE(equity, limit);
   }
 
 //+------------------------------------------------------------------+
@@ -2407,7 +2426,7 @@ double TP_Bank_ShredCost(const double lossOfStep, const double spreadCost)
 bool TP_Bank_CanShred(const double bank, const double lossOfStep, const double spreadCost)
   {
    if(bank <= 0.0) return false;
-   return (bank >= TP_Bank_ShredCost(lossOfStep, spreadCost));
+   return TP_MoneyGE(bank, TP_Bank_ShredCost(lossOfStep, spreadCost));
   }
 
 //+------------------------------------------------------------------+
@@ -2415,7 +2434,9 @@ bool TP_Bank_CanShred(const double bank, const double lossOfStep, const double s
 //+------------------------------------------------------------------+
 double TP_Bank_AfterShred(const double bank, const double lossOfStep, const double spreadCost)
   {
-   return bank - TP_Bank_ShredCost(lossOfStep, spreadCost);
+   double remaining = bank - TP_Bank_ShredCost(lossOfStep, spreadCost);
+   if(TP_MoneyNearZero(remaining)) return 0.0;
+   return remaining;
   }
 
 //+------------------------------------------------------------------+
@@ -2437,7 +2458,7 @@ bool TP_Bank_FindOldestLoser(int &legIndex)
    for(int i = 0; i < TP_LEG_COUNT; i++)
      {
       if(!g_tp.legs[i].open) continue;
-      if(g_tp.legs[i].profit >= 0.0) continue;
+      if(TP_MoneyGE(g_tp.legs[i].profit, 0.0)) continue;
       if(legIndex < 0 || g_tp.legs[i].openTime < oldest)
         {
          legIndex = i;
@@ -2577,6 +2598,8 @@ double TP_Legs_TargetDistanceOf(const double atr, const double spread, const dou
    if(atr <= 0.0) return 0.0;
    double dist = isLegA ? (TargetA_ATR * atr) : (TargetB_ATR * atr);
    double floorDist = TP_Legs_CostFloorOf(spread, point);
+   // This is an exact maximum, not an equality gate: always preserve the
+   // cost floor rather than allowing a tolerance to place a target below it.
    if(dist < floorDist) dist = floorDist;
    return dist;
   }
@@ -2631,7 +2654,7 @@ double TP_Legs_ProfitDistance(const int legIndex)
 bool TP_Legs_RebalanceCondition(const bool sideMissing, const double survivorPnl, const double tolerance)
   {
    if(!sideMissing) return false;
-   return (survivorPnl >= -MathAbs(tolerance));
+   return TP_MoneyGE(survivorPnl, -MathAbs(tolerance));
   }
 
 //+------------------------------------------------------------------+
@@ -2714,7 +2737,7 @@ bool TP_Legs_ReopenAllowed(const int legIndex, string &reason)
    if(g_tp.legs[mirror].open)
      {
       double mtol = TP_ScaledUSD(RebalanceTolUSD, g_tp.legs[mirror].volume);
-      if(g_tp.legs[mirror].profit < -mtol)
+      if(!TP_MoneyGE(g_tp.legs[mirror].profit, -mtol))
         { reason = StringFormat("mirror %s P/L %.2f below tolerance %.2f",
                                 TP_LegName(mirror), g_tp.legs[mirror].profit, mtol); return false; }
      }
@@ -2858,7 +2881,7 @@ void TP_Legs_CloseWinner(const int legIndex)
       double combined = g_tp.legs[legIndex].profit + g_tp.legs[mirror].profit;
       double need = TP_ScaledUSD(MinBankUSD, v1);
 
-      if(MathAbs(v1 - v2) < 1e-8 && combined >= need)
+      if(MathAbs(v1 - v2) < 1e-8 && TP_MoneyGE(combined, need))
         {
          TP_LogInfo(StringFormat("Close By: %s and %s, combined %.2f >= %.2f",
                                  TP_LegName(legIndex), TP_LegName(mirror), combined, need));
@@ -2963,7 +2986,7 @@ void TP_Legs_Update(void)
 
       //--- time stop --------------------------------------------------
       int age = TP_Risk_LegAgeMinutes(i);
-      if(age > MaxLoserMinutes && g_tp.legs[i].profit < 0.0)
+      if(age > MaxLoserMinutes && !TP_MoneyGE(g_tp.legs[i].profit, 0.0))
         {
          if(!TP_Bank_TryShred())
            {
@@ -3491,7 +3514,7 @@ void OnTick()
    if(totalVolume > 0.0)
      {
       double target = TP_ScaledUSD(CycleTargetUSD, totalVolume);
-      if(target > 0.0 && TP_State_CycleTotal() >= target)
+      if(target > 0.0 && TP_MoneyGE(TP_State_CycleTotal(), target))
         {
          TP_LogInfo(StringFormat("Basket target reached: cycle total %.2f >= %.2f.",
                                  TP_State_CycleTotal(), target));
