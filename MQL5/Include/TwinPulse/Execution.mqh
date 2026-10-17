@@ -320,8 +320,8 @@ bool TP_Exec_ModifySL(const ulong ticket, const double newSl, const double newTp
    if(!g_pos.SelectByTicket(ticket))
       return false;
 
-   double curSl = g_pos.SL();
-   double curTp = g_pos.TP();
+   double curSl = g_pos.StopLoss();
+   double curTp = g_pos.TakeProfit();
    bool isBuy = (g_pos.PositionType() == POSITION_TYPE_BUY);
 
    double sl = TP_Exec_NormalizePrice(newSl);

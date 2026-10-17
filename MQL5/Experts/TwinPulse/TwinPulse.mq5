@@ -303,14 +303,25 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
   {
    if(!g_initialised) return;
    if(trans.symbol != g_symbol) return;
-   if(trans.magic != 0 && trans.magic != (ulong)g_magic) return;
 
    if(trans.type == TRADE_TRANSACTION_DEAL_ADD)
      {
+      if(trans.deal == 0 || !HistoryDealSelect(trans.deal)) return;
+      long dealMagic = HistoryDealGetInteger(trans.deal, DEAL_MAGIC);
+      if(dealMagic != g_magic) return;
+
       TP_LogInfo(StringFormat("Deal: order %I64u, deal %I64u, type %d, volume %.2f @ %s",
                               trans.order, trans.deal, (int)trans.type,
                               result.volume, TP_Str(result.price, g_digits)));
      }
+   else if(trans.type == TRADE_TRANSACTION_POSITION)
+     {
+      if(trans.position == 0 || !PositionSelectByTicket(trans.position)) return;
+      long positionMagic = PositionGetInteger(POSITION_MAGIC);
+      if(positionMagic != g_magic) return;
+     }
+   else
+      return;
 
    TP_State_SyncPositions();
   }
