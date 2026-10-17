@@ -1,0 +1,91 @@
+; ==========================================================================
+;  TwinPulse Hedge EA - OptimizeFull.set
+;  Only 8 inputs are optimised, everything else is fixed.
+;  Format: value||start||step||stop
+;    TargetA_ATR   0.6 || 0.4 || 0.2 || 1.0     4 values
+;    TargetB_ATR   1.5 || 1.0 || 0.5 || 2.5     4 values
+;    BE_ATR       0.6 || 0.4 || 0.2 || 1.0     4 values
+;    Trail_ATR    0.8 || 0.5 || 0.1 || 1.2     8 values
+;    HardSL_ATR   2.5 || 1.5 || 0.5 || 3.5     5 values
+;    ChopRange   55.0 ||50.0 || 2.0 ||62.0     7 values
+;    ErRange     0.30||0.20 ||0.05||0.40     5 values
+;    CycleTargetUSD 2.0|| 1.0 || 0.5 || 4.0    7 values
+; ==========================================================================
+
+;--- general ---------------------------------------------------------------
+Magic=26101701
+Mode=0
+AllowLive=false
+ShowPanel=true
+EnableFileLog=true
+VerboseLog=false
+TimerSeconds=1
+DeviationPoints=30
+MaxOrderRetries=3
+
+;--- legs and sizing -------------------------------------------------------
+LegsPerSide=2
+BaseLot=0.01
+LotMultiplier=1.0
+IUnderstandMartingaleRisk=false
+RiskMode=0
+LegRiskPct=0.5
+MaxTotalLots=0.08
+
+;--- targets and exits (the 8 optimised values) ---------------------------
+TargetA_ATR=0.6||0.4||0.2||1.0
+TargetB_ATR=1.5||1.0||0.5||2.5
+BE_ATR=0.6||0.4||0.2||1.0
+Trail_ATR=0.8||0.5||0.1||1.2
+HardSL_ATR=2.5||1.5||0.5||3.5
+CostFloorSpreadMult=3.0
+CycleTargetUSD=2.0||1.0||0.5||4.0
+MinBankUSD=0.30
+RebalanceTolUSD=0.10
+ShredStepLot=0.01
+MaxLoserMinutes=240
+
+;--- regime ----------------------------------------------------------------
+RegimeERPeriod=20
+ErRange=0.30||0.20||0.05||0.40
+ErTrend=0.40
+ChopRange=55.0||50.0||2.0||62.0
+AdxRange=22.0
+AdxTrend=28.0
+AtrSpikeRatio=2.0
+SlopeBars=10
+BBPeriod=20
+BBDev=2.0
+BBRangeATR=0.5
+
+;--- brakes ----------------------------------------------------------------
+BasketStopPct=10.0
+DailyStopPct=5.0
+MinMarginLevelPct=300.0
+MaxSpreadPrice=0.60
+SpreadMedianMult=2.0
+SpreadSampleSec=5
+SpreadWindowMin=20
+
+;--- sessions --------------------------------------------------------------
+SessionStartHour=0
+SessionEndHour=21
+RolloverStartHour=21
+RolloverEndHour=24
+FridayStopHour=20
+FridayFlattenHour=20
+FridayFlattenMinute=45
+FlattenBeforeWeekend=true
+ReopenCooldownSec=60
+
+;--- news ------------------------------------------------------------------
+UseNewsFilter=true
+NewsMinutesBefore=15
+NewsMinutesAfter=15
+NewsCsvFile=TwinPulse_news.csv
+ServerUTCOffsetHours=0.0
+
+;--- display ---------------------------------------------------------------
+PanelFontSize=9
+WriteCsvLogs=true
+FeePerLotRoundTurn=0.0
