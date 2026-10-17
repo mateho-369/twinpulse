@@ -199,7 +199,7 @@ void OnTick()
    if(totalVolume > 0.0)
      {
       double target = TP_ScaledUSD(CycleTargetUSD, totalVolume);
-      if(target > 0.0 && TP_State_CycleTotal() >= target)
+      if(target > 0.0 && TP_MoneyGE(TP_State_CycleTotal(), target))
         {
          TP_LogInfo(StringFormat("Basket target reached: cycle total %.2f >= %.2f.",
                                  TP_State_CycleTotal(), target));

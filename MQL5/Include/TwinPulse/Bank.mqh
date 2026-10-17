@@ -32,7 +32,7 @@ double TP_Bank_ShredCost(const double lossOfStep, const double spreadCost)
 bool TP_Bank_CanShred(const double bank, const double lossOfStep, const double spreadCost)
   {
    if(bank <= 0.0) return false;
-   return (bank >= TP_Bank_ShredCost(lossOfStep, spreadCost));
+   return TP_MoneyGE(bank, TP_Bank_ShredCost(lossOfStep, spreadCost));
   }
 
 //+------------------------------------------------------------------+
@@ -40,7 +40,9 @@ bool TP_Bank_CanShred(const double bank, const double lossOfStep, const double s
 //+------------------------------------------------------------------+
 double TP_Bank_AfterShred(const double bank, const double lossOfStep, const double spreadCost)
   {
-   return bank - TP_Bank_ShredCost(lossOfStep, spreadCost);
+   double remaining = bank - TP_Bank_ShredCost(lossOfStep, spreadCost);
+   if(TP_MoneyNearZero(remaining)) return 0.0;
+   return remaining;
   }
 
 //+------------------------------------------------------------------+
@@ -62,7 +64,7 @@ bool TP_Bank_FindOldestLoser(int &legIndex)
    for(int i = 0; i < TP_LEG_COUNT; i++)
      {
       if(!g_tp.legs[i].open) continue;
-      if(g_tp.legs[i].profit >= 0.0) continue;
+      if(TP_MoneyGE(g_tp.legs[i].profit, 0.0)) continue;
       if(legIndex < 0 || g_tp.legs[i].openTime < oldest)
         {
          legIndex = i;

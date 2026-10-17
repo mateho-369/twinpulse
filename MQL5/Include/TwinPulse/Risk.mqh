@@ -207,7 +207,7 @@ bool TP_Risk_BasketStopHit(void)
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    if(equity <= 0.0) return false;
    double limit = -(equity * BasketStopPct / 100.0);
-   return (TP_State_CycleTotal() <= limit);
+   return TP_MoneyLE(TP_State_CycleTotal(), limit);
   }
 
 //+------------------------------------------------------------------+
@@ -218,7 +218,7 @@ bool TP_Risk_DailyStopHit(void)
    if(g_tp.dayStartEquity <= 0.0) return false;
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    double limit  = g_tp.dayStartEquity * (1.0 - DailyStopPct / 100.0);
-   return (equity <= limit);
+   return TP_MoneyLE(equity, limit);
   }
 
 //+------------------------------------------------------------------+

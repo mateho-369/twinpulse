@@ -12,6 +12,7 @@
 #define TP_VER               "1.00"
 #define TP_COMMENT_PREFIX    "TP"
 #define TP_MAGIC_DEFAULT     26101701
+#define TP_MONEY_EPSILON     1.0e-9
 #define TP_LEG_COUNT         4          // BUY_A, BUY_B, SELL_A, SELL_B
 #define TP_SLOT_COUNT        2          // slot A, slot B
 #define TP_SPREAD_SAMPLES    240        // rolling buffer for the median spread

@@ -46,6 +46,24 @@ double TP_SafeDiv(const double num, const double den, const double fallback)
   }
 
 //+------------------------------------------------------------------+
+//| Money comparisons with a tiny binary floating-point tolerance    |
+//+------------------------------------------------------------------+
+bool TP_MoneyGE(const double value, const double threshold)
+  {
+   return (value >= threshold || MathAbs(value - threshold) <= TP_MONEY_EPSILON);
+  }
+
+bool TP_MoneyLE(const double value, const double threshold)
+  {
+   return (value <= threshold || MathAbs(value - threshold) <= TP_MONEY_EPSILON);
+  }
+
+bool TP_MoneyNearZero(const double value)
+  {
+   return (MathAbs(value) <= TP_MONEY_EPSILON);
+  }
+
+//+------------------------------------------------------------------+
 //| TP_NormalizeVolume - snap a volume to the broker step and clamp   |
 //|  vmin/vmax : symbol volume limits, vstep : volume step,           |
 //|  vlimit    : maximum total volume per side (0 = not used)         |
