@@ -77,8 +77,10 @@ session and weekend rules, high impact news block.
 ## Status of this build
 
 * Built and statically reviewed in a sandbox **without MetaEditor**:
-  145 functions, 471 call sites, no duplicated identifier, no use before the
+  145 functions, 469 call sites, no duplicated identifier, no use before the
   definition, no unbalanced bracket, no MQL4 call (see `docs/COMPILE_CHECKLIST.md`).
+  MetaEditor was installed under Wine, but the compiler aborts under Wine, so
+  the compile step has to be done on the owner's Windows PC.
 * **Not** verified here: the compilation, the Strategy Tester runs and the
   behaviour on a live account. Those need the owner's Windows PC.
 * **No result is claimed.** The numbers in `docs/DESIGN.md` section 5 are

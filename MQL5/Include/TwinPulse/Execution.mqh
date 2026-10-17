@@ -226,7 +226,6 @@ bool TP_Exec_OpenLeg(const int legIndex, const double volume, const double sl, c
    request.type         = isBuy ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
    request.price        = price;
    request.deviation    = DeviationPoints;
-   request.magic        = (ulong)g_magic;
    request.comment      = TP_MakeComment(cycleId, legIndex);
    request.type_filling = TP_Exec_FillingMode();
    request.type_time    = ORDER_TIME_GTC;
