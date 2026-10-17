@@ -1492,8 +1492,7 @@ bool TP_Exec_SendRequest(MqlTradeRequest &request, MqlTradeResult &result, const
          if(chk == 0) chk = (uint)GetLastError();
          if(!TP_Exec_Retriable(chk))
            {
-            TP_LogError(StringFormat("%s failed in OrderCheck: %u (%s)", what, chk,
-                                     g_trade.ResultRetcodeDescription(chk)));
+            TP_LogError(StringFormat("%s failed in OrderCheck, code %u", what, chk));
             return false;
            }
         }
@@ -1503,7 +1502,7 @@ bool TP_Exec_SendRequest(MqlTradeRequest &request, MqlTradeResult &result, const
          uint rc = g_trade.ResultRetcode();
          if(!TP_Exec_Retriable(rc))
            {
-            TP_LogError(StringFormat("%s failed: %u (%s)", what, rc, g_trade.ResultRetcodeDescription(rc)));
+            TP_LogError(StringFormat("%s failed: %u (%s)", what, rc, g_trade.ResultRetcodeDescription()));
             return false;
            }
         }
@@ -1534,7 +1533,7 @@ bool TP_Exec_SendRequest(MqlTradeRequest &request, MqlTradeResult &result, const
             continue;
            }
 
-         TP_LogError(StringFormat("%s failed: %u (%s)", what, rc, g_trade.ResultRetcodeDescription(rc)));
+         TP_LogError(StringFormat("%s failed: %u (%s)", what, rc, g_trade.ResultRetcodeDescription()));
          return false;
         }
 
@@ -1649,7 +1648,7 @@ bool TP_Exec_CloseLeg(const ulong ticket)
      {
       uint rc = g_trade.ResultRetcode();
       TP_LogWarn(StringFormat("Close of ticket %I64u failed: %u (%s)", ticket, rc,
-                              g_trade.ResultRetcodeDescription(rc)));
+                              g_trade.ResultRetcodeDescription()));
       return false;
      }
    return true;
@@ -1665,7 +1664,7 @@ bool TP_Exec_CloseBy(const ulong ticket1, const ulong ticket2)
      {
       uint rc = g_trade.ResultRetcode();
       TP_LogWarn(StringFormat("Close By %I64u / %I64u failed: %u (%s)", ticket1, ticket2, rc,
-                              g_trade.ResultRetcodeDescription(rc)));
+                              g_trade.ResultRetcodeDescription()));
       return false;
      }
    TP_LogInfo(StringFormat("Close By executed: %I64u / %I64u", ticket1, ticket2));
@@ -1682,7 +1681,7 @@ bool TP_Exec_PartialClose(const ulong ticket, const double volume)
      {
       uint rc = g_trade.ResultRetcode();
       TP_LogWarn(StringFormat("Partial close of %I64u (%.2f) failed: %u (%s)", ticket, volume, rc,
-                              g_trade.ResultRetcodeDescription(rc)));
+                              g_trade.ResultRetcodeDescription()));
       return false;
      }
    TP_LogInfo(StringFormat("Partial close: ticket %I64u volume %.2f", ticket, volume));
@@ -1743,13 +1742,13 @@ bool TP_Exec_ModifySL(const ulong ticket, const double newSl, const double newTp
            {
             rc = g_trade.ResultRetcode();
             TP_LogWarn(StringFormat("SL modify of %I64u failed: %u (%s)", ticket, rc,
-                                    g_trade.ResultRetcodeDescription(rc)));
+                                    g_trade.ResultRetcodeDescription()));
             return false;
            }
          return true;
         }
       TP_LogWarn(StringFormat("SL modify of %I64u failed: %u (%s)", ticket, rc,
-                              g_trade.ResultRetcodeDescription(rc)));
+                              g_trade.ResultRetcodeDescription()));
       return false;
      }
 
@@ -1757,7 +1756,7 @@ bool TP_Exec_ModifySL(const ulong ticket, const double newSl, const double newTp
      {
       if(result.retcode == TRADE_RETCODE_NO_CHANGES) return true;
       TP_LogWarn(StringFormat("SL modify of %I64u: %u (%s)", ticket, result.retcode,
-                              g_trade.ResultRetcodeDescription(result.retcode)));
+                              g_trade.ResultRetcodeDescription()));
       return false;
      }
    return true;
