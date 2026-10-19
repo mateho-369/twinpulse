@@ -2133,14 +2133,14 @@ bool TP_Exec_OpenLeg(const int legIndex, const double volume, const double sl, c
    //--- the position identity RIGHT AWAY: without it the next        ---
    //--- TP_State_SyncPositions sees a "new" position session and     ---
    //--- resets the per-position fields we are about to record        ---
-   //--- (that wiped spreadOpen / spreadCost on every open) -----------
-   ulong posTicket = result.position;
-   if(posTicket == 0) posTicket = result.order;
-   if(posTicket != 0)
+   //--- (that wiped spreadOpen / spreadCost on every open).          ---
+   //--- NOTE: MqlTradeResult has NO position field - in hedging mode ---
+   //--- the new position ticket is result.order for a market deal ----
+   ulong posTicket = result.order;
+   if(posTicket != 0 && PositionSelectByTicket(posTicket))
      {
-      g_tp.legs[legIndex].ticket = posTicket;
-      if(PositionSelectByTicket(posTicket))
-         g_tp.legs[legIndex].positionId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+      g_tp.legs[legIndex].ticket     = posTicket;
+      g_tp.legs[legIndex].positionId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
      }
 
    //--- spread accounting for the decision analysis -----------------
