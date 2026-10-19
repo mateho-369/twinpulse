@@ -7,6 +7,15 @@ The format follows `Keep a Changelog`, the project uses semantic versioning.
 
 ### Added
 
+* `MQL5/Experts/TwinPulse/TwinPulseReversal.mq5` + `tester/reversal/R1..R6` -
+  the owner's rule (buy and sell together, close the winner, hold the other to
+  break-even, optional 30/60/90 lock) built so MT5 can settle it instead of an
+  opinion. `R3_NoGuard` is the pure idea, kept as the ruin control.
+* `docs/REVERSAL_TEST.md` - why the rule cannot work as stated: closing the
+  winner leaves one naked position already at -X, so the "hedge" only exists on
+  paper. Includes the break-even table (`p = 1 - (X-0.52)/L`) and the measured
+  give-back on the real gold path (orphan ran 636 USD on a single 0.01 lot).
+
 * `MQL5/Experts/TwinPulse/TwinPulseTrend.mq5` - **round 3**: a new,
   independent EA. One position, no hedge, no averaging, risk sized as 0.5%
   of equity (so it is scale-free, unlike the hedge EA), stop placed with the

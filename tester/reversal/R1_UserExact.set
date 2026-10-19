@@ -1,0 +1,25 @@
+; ==========================================================================
+;  TwinPulse Reversal - the owner's rule, R1_UserExact
+;  the rule as stated: winner closed at 3 ATR, orphan held to break-even, guard 15 ATR
+;  Identical lots on both sides, no martingale, no averaging. The guard is
+;  the ONLY thing that limits the orphan leg: with InpGuard_ATR=0 the EA
+;  holds a naked position until the price returns, however long that takes.
+;  Run:  powershell -File tools\run_batch.ps1 -Preset tester\reversal
+;        -Expert TwinPulse\TwinPulseReversal -Period H1 -Model 2
+; ==========================================================================
+
+InpMagic=26101703
+InpComment=TPR
+InpLots=0.01
+InpMaxLots=1.00
+InpTarget_ATR=3.00
+InpTargetPoints=0.00
+InpLockLadder=false
+InpGuard_ATR=15.00
+InpATRPeriod=14
+InpWinnerStop_ATR=0.00
+InpMaxSpread=0.60
+InpMaxDrawdownPct=25.00
+InpMaxHoldHours=0
+InpWriteCsv=true
+InpVerboseLog=true
