@@ -32,6 +32,22 @@ The format follows `Keep a Changelog`, the project uses semantic versioning.
 
 ### Fixed
 
+* **A `-Preset` run wrote no tester report:** the `.ini` had
+  `Report=reports\decision\<variant>\...` hard-coded while the preset
+  reports belong to `reports\<preset>`, and MT5 writes the report only into a
+  folder that already exists - silently. Every preset pass therefore ended
+  with "produced NO report" even though the tester log said *"last test
+  passed ... successfully finished"* and the CSVs were there. `Report=` is
+  now derived from the real reports folder and every variant folder is
+  created before the first run. The dead pre-generated `.ini` block (the one
+  with `ForwardMode=2`) is gone.
+* **First round-2 evidence (back half, same tick stream as the decision
+  batch):** `UseBankShred=false` really is applied (no `shred` rows at all)
+  and the back half went from **-264.60 to -94.56** (V1 -> W1), gross from
+  **+63.94 to +140.60**, gross PF from **1.04 to 1.10**, gross per leg from
+  +0.050 to +0.155 - exactly the structural loss `docs/UPGRADE_PLAN.md`
+  predicted. Not a verdict: one half, 0% real ticks, no forward report yet.
+
 * **A preset that needs a new input silently ran as the default:** MT5 drops
   `.set` keys it does not know, so running `tester\upgrade` with a
   `TwinPulse.ex5` compiled before `UseBankShred` existed would have produced
