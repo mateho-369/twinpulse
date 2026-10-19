@@ -7,6 +7,14 @@ The format follows `Keep a Changelog`, the project uses semantic versioning.
 
 ### Added
 
+* `docs/ANALYSIS_3.md` - the same best variant on a **100 USD** deposit. It
+  loses 8.47 USD back and 19.84 USD forward (-28.3% over the period) and
+  never makes more than 4.02 USD in a day. The EA is not scale-free: the
+  fixed 0.01 lot against percentage-based daily (5%) and basket (10%) stops
+  throttles the account to 11 active days out of 48, and those two stops
+  alone cost -81.41 USD. Minimum deposit for the controls not to fire is
+  ~700 USD, ~1,100 USD with the measured drawdown.
+
 * `docs/ANALYSIS_2.md` - the round-2 result. The shred hypothesis was
   confirmed (back half -264.60 -> -94.56 with the same risk and the same cost
   per leg), `W2` (time stop) and `W4` (spread filter) turned out to be dead
