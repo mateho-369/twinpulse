@@ -299,6 +299,19 @@ bool TP_Exec_OpenLeg(const int legIndex, const double volume, const double sl, c
                            TP_Str(price, g_digits), result.deal));
    g_lastOpenBlock = "";   // a real open, a later block logs again
 
+   //--- the position identity RIGHT AWAY: without it the next        ---
+   //--- TP_State_SyncPositions sees a "new" position session and     ---
+   //--- resets the per-position fields we are about to record        ---
+   //--- (that wiped spreadOpen / spreadCost on every open) -----------
+   ulong posTicket = result.position;
+   if(posTicket == 0) posTicket = result.order;
+   if(posTicket != 0)
+     {
+      g_tp.legs[legIndex].ticket = posTicket;
+      if(PositionSelectByTicket(posTicket))
+         g_tp.legs[legIndex].positionId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+     }
+
    //--- spread accounting for the decision analysis -----------------
    double spreadNow = tick.ask - tick.bid;
    double contract  = SymbolInfoDouble(g_symbol, SYMBOL_TRADE_CONTRACT_SIZE);

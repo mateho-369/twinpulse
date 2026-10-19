@@ -97,6 +97,14 @@ The format follows `Keep a Changelog`, the project uses semantic versioning.
 
 ### Fixed
 
+* **Spread columns wiped on every open (regression of the bank fix above,
+  found in the first owner smoke run: `sum spread_cost = 0`):**
+  `TP_Exec_OpenLeg` now records `ticket` / `positionId` from the open
+  result, so the next `TP_State_SyncPositions` no longer treats the new
+  position as a fresh session and resets `spreadOpen` / `spreadCost`
+  that were just captured at the open. Runs made with `05d34d6` have
+  `spread_cost = 0` and `gross = pos_net` in `TwinPulse_legs.csv` and
+  must be re-run for the cost columns (the bank checks are unaffected).
 * **Bank accounting (the bank bug):** `legs[i].realized` was reset to 0
   only at cycle start, so a RE-OPENED leg kept the realised money of its
   previous position and `RegisterClose` booked
