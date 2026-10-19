@@ -39,6 +39,12 @@ decision on the hedge idea.
 
 A variant PASSES when all its gates pass.
 
+**Worse-of-two rule** (fixed before any result exists): every net is also
+computed at the reference spread (`net@ref`, default 0.20 = the Exness
+XAUUSDm median, from the legs.csv `spread_open` column). Any gate that
+reads a net or a profit factor is evaluated on BOTH series - as recorded
+and at the reference spread - and passes only on the **worse of the two**.
+
 ## Decision
 
 1. **Any valid PASS** -> trade the SIMPLEST passing variant (order:

@@ -151,6 +151,26 @@ The format follows `Keep a Changelog`, the project uses semantic versioning.
   columns `spread_open`, `spread_cost` (spread x volume x contract size at
   open) and `gross` (net + spread cost), and the `exec summary` prints the
   totals `gross before spread` / `spread paid`.
+* Server-time honesty for the batch: `tools/run_batch.ps1` gets
+  `-ServerUtcOffset` (Exness = 0) and generates the session / rollover /
+  Friday hours in every `.set` from fixed UTC values (rollover 21-24 UTC,
+  Friday stop 20 UTC, session as before), so the same UTC windows are
+  used on any broker. The hour windows in `Risk.mqh` are midnight-wrap
+  aware now (`TP_Risk_InHourWindow`; identical behaviour whenever
+  start <= end, SelfTest covers the wrap).
+* Cost realism in `tools/summarize_batch.py`: `--ref-spread` (default
+  0.20 = the Exness XAUUSDm median) computes `net@ref` from the
+  legs.csv `spread_open` column - shown next to every net, and the gates
+  use the **worse of the two** cost series (docs/DECISION_RULES.md).
+  `SUMMARY.md` starts with the symbol specs and the median / p90 spread
+  of the run.
+* `MQL5/Scripts/TwinPulse/TwinPulseSymbolInfo.mq5`: prints digits,
+  point, contract size, volume min/step/max, stops/freeze level, swap
+  long/short, filling modes, hedging yes/no, the server UTC offset
+  (`TimeTradeServer - TimeGMT`) and the median / p90 spread of the last
+  5 trading days (`CopyTicksRange`), and writes the same text to
+  `Common\Files\TwinPulseSymbolInfo.txt` (picked up by the summarizer).
+  Both runbooks describe it.
 * `tester/decision/` with the 8 fixed variants V1..V8 (FULL, rollover
   flatten, PURE, ONE_SIDE, LegSet B / A, RANDOM seed 1 / 2 - no
   optimisation), `tools/run_batch.ps1` (symbol / dates / deposit are

@@ -27,6 +27,12 @@ param(
     [string]$InstallDir = "C:\Program Files\MetaTrader 5",
     [string]$DataDir    = "$env:APPDATA\MetaQuotes\Terminal\D0E8209F77C8CF37AD8BF550E51FF075",
 
+    # server clock vs UTC in hours (integer). Session / rollover / Friday
+    # inputs are SERVER hours: the script writes them into the .set files
+    # from the UTC values below, so the same UTC windows are used on any
+    # broker. Exness = 0.
+    [double]$ServerUtcOffset = 0,
+
     [string]$RepoRoot = (Split-Path $PSScriptRoot -Parent)
 )
 
@@ -89,17 +95,58 @@ Visual=0
 Write-Host "[batch] symbol=$Symbol  $FromDate .. $ToDate  deposit=$Deposit"
 
 #--- copy every .set to DATA and INSTALL Profiles\Tester ------------------
-#--- (ExpertParameters carries the file name only) -------------------------
+#--- (ExpertParameters carries the file name only). The session /         --
+#--- rollover / Friday hours are SERVER hours: generate them from the     --
+#--- UTC values with -ServerUtcOffset (Exness = 0) so the same UTC        --
+#--- windows are used on any broker. Day wrap is handled: 24 keeps its    --
+#--- end-of-day meaning, everything else wraps into 0..23.                --
+if($ServerUtcOffset -ne [math]::Floor($ServerUtcOffset)) { throw "ServerUtcOffset must be whole hours (got $ServerUtcOffset)" }
+$off = [int]$ServerUtcOffset
+
+# UTC base hours ("session as now", rollover 21-24 UTC, Friday stop 20 UTC)
+$utcHours = [ordered]@{
+   SessionStartHour  = 0
+   SessionEndHour    = 21
+   RolloverStartHour = 21
+   RolloverEndHour   = 24      # 24 = end of day
+   FridayStopHour    = 20
+   FridayFlattenHour = 20      # FridayFlattenMinute (45) is not shifted
+}
+
+function To-ServerHour([int]$utcHour, [int]$offsetHours)
+  {
+   $h = $utcHour + $offsetHours
+   if($utcHour -eq 24 -and $h -eq 24) { return 24 }   # end of day stays 24
+   while($h -lt 0)  { $h += 24 }
+   while($h -ge 24) { $h -= 24 }
+   return $h
+  }
+
+Write-Host "[batch] server hours from UTC (offset $off h):"
+$srvHours = @{}
+foreach($k in $utcHours.Keys)
+  {
+   $srvHours[$k] = To-ServerHour $utcHours[$k] $off
+   Write-Host ("        {0,-18} UTC {1,2} -> server {2,2}" -f $k, $utcHours[$k], $srvHours[$k])
+  }
+if($off -ne 0) { Write-Host "        (windows that cross midnight wrap in the EA)" }
+
 $dataSetDir  = Join-Path $DataDir     "MQL5\Profiles\Tester"
 $instSetDir  = Join-Path $InstallDir  "Profiles\Tester"
 New-Item -ItemType Directory -Force -Path $dataSetDir | Out-Null
 New-Item -ItemType Directory -Force -Path $instSetDir | Out-Null
 foreach($v in $variants)
   {
-   Copy-Item (Join-Path $iniDir "$($v.name).set") $dataSetDir -Force
-   Copy-Item (Join-Path $iniDir "$($v.name).set") $instSetDir -Force
+   $src  = Join-Path $iniDir "$($v.name).set"
+   $text = Get-Content $src -Raw
+   foreach($k in $utcHours.Keys)
+     {
+      $text = $text -replace ("(?m)^{0}=\d+" -f $k), ("{0}={1}" -f $k, $srvHours[$k])
+     }
+   Set-Content -Path (Join-Path $dataSetDir "$($v.name).set") -Value $text -Encoding ASCII
+   Set-Content -Path (Join-Path $instSetDir "$($v.name).set") -Value $text -Encoding ASCII
   }
-Write-Host "[batch] .set files copied to $dataSetDir and $instSetDir"
+Write-Host "[batch] .set files (hours generated) copied to $dataSetDir and $instSetDir"
 
 #--- run the variants -----------------------------------------------------
 $index = 0
@@ -148,4 +195,4 @@ foreach($v in $variants)
   }
 
 Write-Host "[batch] all variants processed."
-Write-Host "[batch] now run:  python tools\summarize_batch.py --data `"$DataDir`" --from $FromDate --to $ToDate"
+Write-Host "[batch] now run:  python tools\summarize_batch.py --data `"$DataDir`" --from $FromDate --to $ToDate --symbol $Symbol"

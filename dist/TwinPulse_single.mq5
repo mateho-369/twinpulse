@@ -2488,6 +2488,21 @@ bool TP_Risk_SpreadOK(void)
   }
 
 //+------------------------------------------------------------------+
+//| TP_Risk_InHourWindow - is the hour inside [start, end) in hours?  |
+//|  The window may wrap midnight (start > end), which happens when   |
+//|  the server hours are shifted for a non-zero ServerUtcOffset      |
+//|  (e.g. the rollover 21-24 UTC is 23-2 server on a UTC+2 broker).  |
+//|  start < end : the usual window; start == end : empty;            |
+//|  start > end : [start,24) + [0,end) (pure).                       |
+//+------------------------------------------------------------------+
+bool TP_Risk_InHourWindow(const int hour, const int start, const int end)
+  {
+   if(start < end)  return (hour >= start && hour < end);
+   if(start > end)  return (hour >= start || hour < end);
+   return false;
+  }
+
+//+------------------------------------------------------------------+
 //| TP_Risk_InRolloverBlock - pure test for the rollover block window |
 //|  The base window is [rolloverStart, rolloverEnd) in server hours. |
 //|  flattenMinutes > 0 extends it that many minutes BEFORE           |
@@ -2499,8 +2514,8 @@ bool TP_Risk_InRolloverBlock(const datetime t, const int flattenMinutes,
    int hour   = TP_ServerHour(t);
    int minute = TP_ServerMinute(t);
 
-   //--- the base window: unchanged hour logic -----------------------
-   if(hour >= rolloverStart && hour < rolloverEnd) return true;
+   //--- the base window: hour logic, midnight wrap included ---------
+   if(TP_Risk_InHourWindow(hour, rolloverStart, rolloverEnd)) return true;
 
    //--- the pre-rollover extension (FlattenBeforeRollover) ----------
    if(flattenMinutes > 0)
@@ -2535,7 +2550,9 @@ bool TP_Risk_SessionFilter(const datetime t,
 
    if(newCycle)
      {
-      if(hour < sessionStart || hour >= sessionEnd) return false;
+      //--- the session window [sessionStart, sessionEnd), midnight
+      //--- wrap included (see TP_Risk_InHourWindow) ------------------
+      if(!TP_Risk_InHourWindow(hour, sessionStart, sessionEnd)) return false;
       if(TP_IsFriday(t) && hour >= fridayStop) return false;
      }
    return true;

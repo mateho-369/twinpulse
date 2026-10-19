@@ -106,6 +106,25 @@ If any `FAIL` appears, do **not** use the EA and send the full output back.
 
 ---
 
+## 4b. Symbol info - run once on the batch symbol
+
+1. Open a chart of the batch symbol (e.g. **XAUUSDm**) on a live (or demo)
+   account.
+2. Drag `TwinPulseSymbolInfo` from `Navigator -> Scripts` onto the chart.
+3. The script prints digits, point, contract size, volume min / step / max,
+   stops / freeze level, swap long / short, filling modes, hedging
+   yes / no, the server UTC offset (`TimeTradeServer - TimeGMT`) and the
+   median / 90th percentile spread of the last 5 trading days
+   (`CopyTicksRange` real ticks) into the journal, and writes the same
+   text to `Common\Files\TwinPulseSymbolInfo.txt`.
+4. Keep that file: `tools/summarize_batch.py` shows it as the symbol specs
+   at the top of `SUMMARY.md`. Use the printed `server UTC offset` as the
+   `-ServerUtcOffset` parameter of `tools\run_batch.ps1` (Exness = 0), so
+   the session / rollover / Friday hours of the `.set` files describe the
+   same UTC windows on any broker.
+
+---
+
 ## 5. Strategy Tester with the `.ini` files
 
 0. **Create the folder `<DATA>\reports` first** - every `.ini` writes its

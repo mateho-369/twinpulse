@@ -281,6 +281,29 @@ void Test_TimeFilters(void)
             !TP_Risk_SessionFilter(earlyEvening, 0, 21, 21, 24, 20, false, 10));
    TP_Check("the session filter still allows a re-open at 20:50 when the flatten is off",
             TP_Risk_SessionFilter(earlyEvening, 0, 21, 21, 24, 20, false));
+
+   //--- midnight wrap: the same UTC windows shifted by +2 server hours
+   //--- (rollover 21-24 UTC becomes 23-2, session 0-21 becomes 2-23) -
+   TP_Check("a wrapped hour window includes hours after the start",
+            TP_Risk_InHourWindow(23, 23, 2) && TP_Risk_InHourWindow(0, 23, 2) && TP_Risk_InHourWindow(1, 23, 2));
+   TP_Check("a wrapped hour window excludes hours after its end",
+            !TP_Risk_InHourWindow(2, 23, 2) && !TP_Risk_InHourWindow(12, 23, 2));
+   TP_Check("a normal hour window is unchanged by the wrap helper",
+            TP_Risk_InHourWindow(21, 21, 24) && !TP_Risk_InHourWindow(0, 21, 24) && !TP_Risk_InHourWindow(24, 21, 24));
+   TP_Check("an equal start and end is an empty window",
+            !TP_Risk_InHourWindow(12, 24, 24));
+   TP_Check("the wrapped rollover window blocks 00:30 and 23:30",
+            TP_Risk_InRolloverBlock(StringToTime("2024.01.10 00:30"), 0, 23, 2) &&
+            TP_Risk_InRolloverBlock(StringToTime("2024.01.10 23:30"), 0, 23, 2));
+   TP_Check("the wrapped rollover window frees 02:30 and noon",
+            !TP_Risk_InRolloverBlock(StringToTime("2024.01.10 02:30"), 0, 23, 2) &&
+            !TP_Risk_InRolloverBlock(StringToTime("2024.01.10 12:00"), 0, 23, 2));
+   TP_Check("the pre-rollover extension works with a wrapped window",
+            TP_Risk_InRolloverBlock(StringToTime("2024.01.10 22:55"), 10, 23, 2));
+   TP_Check("a wrapped session (2-23) allows noon and blocks 01:00 / the rollover hours",
+            TP_Risk_SessionFilter(wednesday, 2, 23, 23, 2, 22, true) &&
+            !TP_Risk_SessionFilter(StringToTime("2024.01.10 01:00"), 2, 23, 23, 2, 22, true) &&
+            !TP_Risk_SessionFilter(StringToTime("2024.01.10 23:30"), 2, 23, 23, 2, 22, false));
   }
 
 //+------------------------------------------------------------------+

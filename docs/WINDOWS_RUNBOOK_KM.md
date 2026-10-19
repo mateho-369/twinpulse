@@ -214,14 +214,25 @@ copy "<REPO>\dist\TwinPulse_single.mq5" "<DATA>\MQL5\Experts\"
 
 1. Compile ចុងក្រោយ (TwinPulse.mq5 + TwinPulseSelfTest.mq5) ហើយរត់ SelfTest
    ឲ្យបាន PASS ទាំងអស់។
-2. ត្រូវការប្រវត្តិតម្លៃពិត (real ticks) សម្រាប់និមិត្តសញ្ញាដែលនឹងសាកល្បង។
+2. រត់ script `TwinPulseSymbolInfo` លើ chart របស់និមិត្តសញ្ញាដែលនឹងសាកល្បង
+   (ពេលមានការតភ្ជាប់អ៊ីនធឺណិត)៖ វាបោះពុម្ព digits, point, contract size,
+   volume min/step/max, stops/freeze level, swap long/short, filling modes,
+   hedging yes/no, server UTC offset (TimeTradeServer − TimeGMT) និង
+   spread មេឌៀន / p90 នៃ ៥ ថ្ងៃជួញដូរចុងក្រោយ (CopyTicksRange) ទៅ journal
+   ហើយសរសេរដូចគ្នាទៅ `Common\Files\TwinPulseSymbolInfo.txt`
+   (summarize_batch.py នឹងបង្ហាញវាក្នុង SUMMARY.md)។
+3. ត្រូវការប្រវត្តិតម្លៃពិត (real ticks) សម្រាប់និមិត្តសញ្ញាដែលនឹងសាកល្បង។
    បើ History Quality តិចជាង ៩០% - លទ្ធផលនឹងត្រូវសម្គាល់ថា
    **NOT VALID FOR GATES** ហើយមិនអាចសម្រេចអ្វីបានទេ។
-3. កែប៉ារ៉ាម៉ែត្រនៅដើម `tools\run_batch.ps1` (ឬហៅជាមួយ -Symbol ។ល។):
+4. កែប៉ារ៉ាម៉ែត្រនៅដើម `tools\run_batch.ps1` (ឬហៅជាមួយ -Symbol ។ល។):
    `-Symbol` (ដូចជា XAUUSDm), `-FromDate` (2022.01.01), `-ToDate` (2026.09.30),
-   `-Deposit` (1000) រួមទាំង `-InstallDir` (ថត terminal64.exe) និង
-   `-DataDir` (ថត data របស់ terminal)។
-4. រៀបចំ `Common\Files\TwinPulse_news.csv` បើប្រើតម្រងព័ត៌មាន (NewsFilter)។
+   `-Deposit` (1000), `-InstallDir` (ថត terminal64.exe), `-DataDir` (ថត data
+   របស់ terminal) និង `-ServerUtcOffset` (ម៉ោង server ប្រៀបនឹង UTC — Exness = 0,
+   យកពីជួរ "server UTC offset" របស់ TwinPulseSymbolInfo)។ ម៉ោង session /
+   rollover / Friday ក្នុងឯកសារ `.set` នឹងត្រូវបង្កើតពីតម្លៃ UTC (rollover 21-24
+   UTC, Friday stop 20 UTC) ដោយស្វ័យប្រវត្តិ — បើ offset ធ្វើឲ្យ window ឆ្លង
+   អាធ្រាត្រ វានឹង wrap ត្រឹមត្រូវ។
+5. រៀបចំ `Common\Files\TwinPulse_news.csv` បើប្រើតម្រងព័ត៌មាន (NewsFilter)។
 
 ### ២. រត់ម្តងទៅគេង (PowerShell)
 
@@ -241,7 +252,8 @@ script ដដែល - variant ដែលមានរបាយការណ៍រ�
 ### ៣. ពេលព្រឹក - បូកសរុប
 
 ```powershell
-python tools\summarize_batch.py --data "<DataDir>" --from 2022.01.01 --to 2026.09.30
+python tools\summarize_batch.py --data "<DataDir>" --from 2022.01.01 --to 2026.09.30 `
+    --symbol XAUUSDm --contract-size 100 --ref-spread 0.20
 ```
 
 អាន `reports\decision\SUMMARY.md` (BACK + FORWARD + តារាង gates + ការសម្រេច)
