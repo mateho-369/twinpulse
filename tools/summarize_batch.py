@@ -376,6 +376,10 @@ def main():
         print("SUMMARY.md / SUMMARY_BACK.md were NOT written - no verdict.")
         return 3
 
+    # a partial batch (the overnight run was interrupted, or only some
+    # variants were run with -Only) must not produce a verdict either
+    missing = [v for v in VARIANTS if not _has_data(data[v])]
+
     # ---- run-level spread stats (the run's own spread) --------------
     all_rows = []
     for v in VARIANTS:
@@ -519,6 +523,13 @@ def main():
     lines = []
     lines.append("# TwinPulse decision batch - SUMMARY")
     lines.append("")
+    if missing:
+        lines.append("> **BATCH INCOMPLETE** - no data for: %s" % ", ".join(missing))
+        lines.append("> (the tester produced no report / no legs.csv rows for them).")
+        lines.append("> The gates below only describe the variants that ran - this file")
+        lines.append("> contains NO verdict. Run `run_batch.ps1` again (it is resume-safe)")
+        lines.append("> and re-summarize with the complete batch.")
+        lines.append("")
     lines.append("period %s .. %s, forward starts %s (ForwardMode 2 = forward 1/3)."
                  % (args.d_from, args.d_to, fwd_start.strftime("%Y.%m.%d")))
     lines.append("Report fields are taken from the tester report; legs / gross / spread")
@@ -624,7 +635,12 @@ def main():
             best_gross = gp
     lines.append("## Verdict (docs/DECISION_RULES.md)")
     lines.append("")
-    if passing:
+    if missing:
+        lines.append("**BATCH INCOMPLETE - no verdict.** Missing data for: %s."
+                     % ", ".join(missing))
+        lines.append("A verdict needs all 8 variants; rerun the batch (resume-safe)")
+        lines.append("and re-summarize.")
+    elif passing:
         lines.append("**PASS: %s** -> trade the SIMPLEST passing variant (%s) on a"
                      % (", ".join(passing), passing[0]))
         lines.append("4-week demo, no more tuning.")
@@ -644,6 +660,9 @@ def main():
     b = []
     b.append("# TwinPulse decision batch - SUMMARY (BACK period only)")
     b.append("")
+    if missing:
+        b.append("> **BATCH INCOMPLETE** - no data for: %s (no verdict)." % ", ".join(missing))
+        b.append("")
     b.append("period %s .. %s, BACK = %s .. %s (the forward part is NOT included,"
              % (args.d_from, args.d_to, args.d_from, fwd_start.strftime("%Y.%m.%d")))
     b.append("no forward data appears in this file).")

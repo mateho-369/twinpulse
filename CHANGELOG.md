@@ -18,7 +18,10 @@ The format follows `Keep a Changelog`, the project uses semantic versioning.
   when a variant produced nothing. New `-Only V1_Full` runs a single
   variant. `tools/summarize_batch.py` refuses to write any verdict when
   no variant has a report or CSV rows (**NO DATA**, exit code 3, no
-  `SUMMARY*.md` written) instead of judging an empty batch.
+  `SUMMARY*.md` written) instead of judging an empty batch. A partial
+  batch (some variants with no data - an interrupted overnight run or
+  `-Only`) writes the tables with a **BATCH INCOMPLETE** banner and
+  **no verdict**.
 * Stop modifications ("Invalid stops" flood): every trailing / break-even
   stop is now validated before it is sent. The new pure helper
   `TP_ClampStop` clamps the stop into the legal region
