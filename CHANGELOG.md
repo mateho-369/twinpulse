@@ -32,6 +32,13 @@ The format follows `Keep a Changelog`, the project uses semantic versioning.
 
 ### Fixed
 
+* `summarize_batch.py` now **discovers the variants** from the reports folder
+  (a `-Preset` round such as `tester\upgrade` = W1..W6 works without editing
+  the list) and recognises a RANDOM control by its name.
+* The `pos_net` vs report-net check no longer trims a one-second-earlier CSV
+  row: it takes the plain sum when that already agrees and only trims to the
+  report's last trade (+5 s) for a legacy CSV that mixes both halves.
+
 * **A `-Preset` run wrote no tester report:** the `.ini` had
   `Report=reports\decision\<variant>\...` hard-coded while the preset
   reports belong to `reports\<preset>`, and MT5 writes the report only into a

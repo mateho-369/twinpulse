@@ -34,9 +34,29 @@ import re
 import sys
 from datetime import datetime, timedelta
 
-VARIANTS = ["V1_Full", "V2_FullRollover", "V3_Pure", "V4_OneSide",
-            "V5_LegB", "V6_LegA", "V7_Random1", "V8_Random2"]
-RANDOM = ["V7_Random1", "V8_Random2"]
+# The variant list is DISCOVERED from the reports folder: the decision batch
+# (V1..V8) and a preset round (tester\upgrade: W1..W6) both work without
+# touching this file. Any folder that holds a report or a legs CSV counts;
+# a "RANDOM" control is recognised by its name.
+VARIANTS = []
+RANDOM = []
+
+
+def discover(rdir):
+    """folders of rdir that carry a tester report or a legs CSV"""
+    out = []
+    if not os.path.isdir(rdir):
+        return out
+    for fn in sorted(os.listdir(rdir)):
+        vdir = os.path.join(rdir, fn)
+        if not os.path.isdir(vdir) or fn.startswith("_"):
+            continue
+        names = os.listdir(vdir)
+        has = any(n.lower().endswith((".htm", ".html")) for n in names) or \
+              any(n.startswith("TwinPulse_legs") and n.endswith(".csv") for n in names)
+        if has:
+            out.append(fn)
+    return out
 # the decision order for "the simplest passing variant"
 SIMPLENESS = ["V1_Full", "V2_FullRollover", "V3_Pure", "V4_OneSide",
               "V6_LegA", "V5_LegB", "V7_Random1", "V8_Random2"]
@@ -433,6 +453,12 @@ def main():
         print("folder not found: %s" % rdir)
         return 2
 
+    global VARIANTS, RANDOM
+    VARIANTS = discover(rdir)
+    RANDOM = [v for v in VARIANTS if "random" in v.lower()]
+    if VARIANTS:
+        print("variants (%d): %s" % (len(VARIANTS), ", ".join(VARIANTS)))
+
     ref = args.ref_spread
     csize = args.contract_size
     d_from = datetime.strptime(args.d_from, "%Y.%m.%d")
@@ -623,10 +649,21 @@ def main():
             # single run ends at its last trade (the forward pass of a
             # ForwardMode run is NOT in the saved report, while the CSVs go
             # on), so comparing it with every row of the period is wrong
+            # the CSV of a single run covers exactly that run, so the whole
+            # sum is the right one; only a legacy CSV that mixes back+forward
+            # needs the trim. Try the plain sum first and trim to the report's
+            # last trade (+ a few seconds: the report lists the order time,
+            # the CSV the deal time, they can differ by a second) only when
+            # the plain one disagrees.
+            s_all = legs.net(rows) if rows else None
             lt = rep.get("last_trade")
+            if s_all is not None and abs(s_all - rn) <= 1.00:
+                row.append((s_all, rn, True))
+                continue
             use = rows
             if lt is not None:
-                use = [r for r in rows if legs._close(r) is None or legs._close(r) <= lt]
+                lim = lt + timedelta(seconds=5)
+                use = [r for r in rows if legs._close(r) is None or legs._close(r) <= lim]
             s = legs.net(use)
             row.append((s, rn, abs(s - rn) <= 1.00))
         posnet[v] = row
@@ -805,7 +842,10 @@ def main():
         lines.append("")
 
     # ---- verdict (docs/DECISION_RULES.md, fixed before the results) ---
-    passing = [v for v in SIMPLENESS if allg[v]["_pass"]]
+    # the decision batch order first, then anything else alphabetically
+    order = [v for v in SIMPLENESS if v in allg] + \
+            [v for v in VARIANTS if v not in SIMPLENESS]
+    passing = [v for v in order if allg[v]["_pass"]]
     best_gross = None
     for v in VARIANTS:
         gp = data[v]["legs"].gross_pf()
