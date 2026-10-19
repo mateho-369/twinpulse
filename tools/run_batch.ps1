@@ -30,6 +30,10 @@ param(
     # (e.g. -Preset "tester\upgrade"); one variant per <name>.set file
     [string]$Preset = "",
 
+    # optional: ignore finished results and run the batch again (the old
+    # reports / CSVs are moved into _old_<timestamp>, never deleted)
+    [switch]$Redo,
+
     # paths: <INSTALL> = folder with terminal64.exe, <DATA> = terminal data
     # folder (File -> Open Data Folder in the terminal)
     [string]$InstallDir = "C:\Program Files\MetaTrader 5",
@@ -248,6 +252,43 @@ foreach($v in $variants)
        @{ tag = "fwd";  from = $fwd_from; to = $d_to;
           report = "report_fwd.htm";  legs = "TwinPulse_legs_fwd.csv"  }
    )
+
+   #--- a finished folder is only reusable for the SAME run: deposit,
+   #--- symbol, dates and preset are stamped into runinfo.txt. MT5 writes
+   #--- no trace of the deposit into the report, so reusing a 1000 USD
+   #--- folder for a 100 USD test would silently "analyse" the wrong run.
+   $runId = ("sym={0};from={1};to={2};dep={3};preset={4}" -f `
+             $Symbol, $d_from.ToString("yyyy.MM.dd"), $d_to.ToString("yyyy.MM.dd"), `
+             $Deposit, $Preset)
+   $idFile  = Join-Path $outDir "runinfo.txt"
+   $oldId   = ""
+   if(Test-Path $idFile)
+     {
+      $oldId = (Get-Content $idFile -Raw -ErrorAction SilentlyContinue)
+      if($null -eq $oldId) { $oldId = "" }
+      $oldId = $oldId.Trim()
+     }
+   $stale = (($oldId -ne "") -and ($oldId -ne $runId))
+
+   if($Redo -or $stale)
+     {
+      if($stale)
+        {
+         Write-Host ("[{0}/{1}] {2}: results are from a DIFFERENT run - redoing" -f $index, $variants.Count, $n)
+         Write-Host ("        old: {0}" -f $oldId)
+         Write-Host ("        new: {0}" -f $runId)
+        }
+      else
+        {
+         Write-Host ("[{0}/{1}] {2}: -Redo, redoing" -f $index, $variants.Count, $n)
+        }
+      $keep = Join-Path $outDir ("_old_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
+      New-Item -ItemType Directory -Force -Path $keep | Out-Null
+      Get-ChildItem $outDir -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -ne "runinfo.txt" } |
+        ForEach-Object { Move-Item $_.FullName (Join-Path $keep $_.Name) -Force }
+     }
+   Set-Content -Path $idFile -Value $runId -Encoding ASCII
 
    #--- resume: a variant whose two reports and two CSVs exist is done ----
    $done = $true
