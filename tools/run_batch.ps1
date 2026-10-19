@@ -50,7 +50,8 @@ $variants = @(
 )
 
 $terminal = Join-Path $InstallDir "terminal64.exe"
-$iniDir   = Join-Path $RepoRoot  "tester\decision"
+$iniDir   = Join-Path $RepoRoot  "tester\decision"      # tracked templates (read only)
+$localDir = Join-Path $DataDir   "tester_local\decision" # generated run files (never the repo)
 $reports  = Join-Path $DataDir   "reports\decision"
 $common   = Join-Path $DataDir   "..\Common\Files"
 
@@ -60,6 +61,9 @@ if(!(Test-Path $DataDir))  { throw "DATA folder not found: $DataDir" }
 #--- <DATA>\reports\decision must exist before any tester run --------------
 New-Item -ItemType Directory -Force -Path $reports | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $DataDir "reports") | Out-Null
+#--- the generated .ini files live OUTSIDE the repo (never modify tracked
+#--- files from a run script) ---------------------------------------------
+New-Item -ItemType Directory -Force -Path $localDir | Out-Null
 
 #--- generate the .ini files from the parameters --------------------------
 foreach($v in $variants)
@@ -90,9 +94,10 @@ ReplaceReport=1
 ShutdownTerminal=1
 Visual=0
 "@
-   Set-Content -Path (Join-Path $iniDir "$n.ini") -Value $ini -Encoding ASCII
+   Set-Content -Path (Join-Path $localDir "$n.ini") -Value $ini -Encoding ASCII
   }
 Write-Host "[batch] symbol=$Symbol  $FromDate .. $ToDate  deposit=$Deposit"
+Write-Host "[batch] run .ini files generated in $localDir (the repo is not modified)"
 
 #--- copy every .set to DATA and INSTALL Profiles\Tester ------------------
 #--- (ExpertParameters carries the file name only). The session /         --
@@ -134,7 +139,20 @@ if($off -ne 0) { Write-Host "        (windows that cross midnight wrap in the EA
 $dataSetDir  = Join-Path $DataDir     "MQL5\Profiles\Tester"
 $instSetDir  = Join-Path $InstallDir  "Profiles\Tester"
 New-Item -ItemType Directory -Force -Path $dataSetDir | Out-Null
-New-Item -ItemType Directory -Force -Path $instSetDir | Out-Null
+
+#--- the INSTALL copy is optional: Program Files is write protected for
+#--- normal users (PermissionDenied) and the tester reads DATA ---------
+$instOk = $true
+try
+  {
+   New-Item -ItemType Directory -Force -Path $instSetDir -ErrorAction Stop | Out-Null
+  }
+catch
+  {
+   $instOk = $false
+   Write-Host "[batch] WARNING: cannot write $instSetDir - the tester reads DATA, continuing without the INSTALL copy"
+  }
+
 foreach($v in $variants)
   {
    $src  = Join-Path $iniDir "$($v.name).set"
@@ -144,9 +162,21 @@ foreach($v in $variants)
       $text = $text -replace ("(?m)^{0}=\d+" -f $k), ("{0}={1}" -f $k, $srvHours[$k])
      }
    Set-Content -Path (Join-Path $dataSetDir "$($v.name).set") -Value $text -Encoding ASCII
-   Set-Content -Path (Join-Path $instSetDir "$($v.name).set") -Value $text -Encoding ASCII
+   if($instOk)
+     {
+      try
+        {
+         Set-Content -Path (Join-Path $instSetDir "$($v.name).set") -Value $text -Encoding ASCII -ErrorAction Stop
+        }
+      catch
+        {
+         $instOk = $false
+         Write-Host "[batch] WARNING: INSTALL copy failed ($($_.Exception.Message)) - continuing with the DATA copy only"
+        }
+     }
   }
-Write-Host "[batch] .set files (hours generated) copied to $dataSetDir and $instSetDir"
+Write-Host "[batch] .set files (hours generated) copied to $dataSetDir"
+if($instOk) { Write-Host "[batch] .set files copied to $instSetDir as well" }
 
 #--- run the variants -----------------------------------------------------
 $index = 0
@@ -178,7 +208,7 @@ foreach($v in $variants)
      }
 
    #--- start the tester and wait for the exit --------------------------
-   $ini = Join-Path $iniDir "$n.ini"
+   $ini = Join-Path $localDir "$n.ini"
    Write-Host "        terminal64.exe /config:$ini"
    $p = Start-Process -FilePath $terminal -ArgumentList "/config:`"$ini`"" -PassThru
    $p.WaitForExit()

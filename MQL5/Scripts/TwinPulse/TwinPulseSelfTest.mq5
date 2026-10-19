@@ -598,6 +598,69 @@ void Test_DecisionHelpers(void)
   }
 
 //+------------------------------------------------------------------+
+//| Test 14 - bank accounting: close -> re-open -> shred -> close     |
+//|  The bank must always equal the sum of the realised money of the  |
+//|  closed positions. The bug: a re-opened leg kept the realized of  |
+//|  its previous position, so the next close booked the old money    |
+//|  again (RegisterClose delta = cumulative - realized(old + new)).  |
+//+------------------------------------------------------------------+
+void Test_BankAccounting(void)
+  {
+   Print("--- bank accounting (close / re-open / shred / close) ---");
+   const int leg = TP_LEG_BUY_B;
+
+   //--- a new position session resets EVERY per-position field ------
+   g_tp.legs[leg].realized      = -2.94;   // garbage of the old session
+   g_tp.legs[leg].booked        = true;
+   g_tp.legs[leg].beDone        = true;
+   g_tp.legs[leg].peakPrice     = 1900.0;
+   g_tp.legs[leg].lastModify    = 12345;
+   g_tp.legs[leg].modifyFails   = 2;
+   g_tp.legs[leg].modifyBackoff = 999;
+   TP_State_NewPositionSession(leg);
+   TP_Check("a new position session resets realized (the bank bug)",
+            g_tp.legs[leg].realized == 0.0);
+   TP_Check("a new position session resets booked / beDone / modify state",
+            !g_tp.legs[leg].booked && !g_tp.legs[leg].beDone &&
+            g_tp.legs[leg].peakPrice == 0.0 && g_tp.legs[leg].lastModify == 0 &&
+            g_tp.legs[leg].modifyFails == 0 && g_tp.legs[leg].modifyBackoff == 0);
+
+   //--- position 1 opens and closes with +1.50 ----------------------
+   double bank = 0.0;
+   double delta = TP_Bank_CloseDelta(g_tp.legs[leg].realized, 1.50);
+   g_tp.legs[leg].realized = 1.50;
+   bank += delta;
+   TP_CheckEq("close 1 books the full realised money of position 1", bank, 1.50, 1e-8);
+
+   //--- the leg RE-OPENS: position 2 starts with realized = 0 -------
+   TP_State_NewPositionSession(leg);
+   TP_Check("the re-open resets realized to zero",
+            g_tp.legs[leg].realized == 0.0);
+
+   //--- a partial shred books its delta (as TP_Bank_TryShred does) --
+   double shred = -0.43;
+   bank += shred;
+   g_tp.legs[leg].realized += shred;
+   TP_CheckEq("the shred books only its own delta", bank, 1.07, 1e-8);
+
+   //--- position 2 closes: cumulative -1.00 (shred included) --------
+   delta = TP_Bank_CloseDelta(g_tp.legs[leg].realized, -1.00);
+   g_tp.legs[leg].realized = -1.00;
+   bank += delta;
+   TP_CheckEq("close 2 books only the rest of position 2", delta, -0.57, 1e-8);
+   TP_CheckEq("the bank is the sum of the realised money (1.50 - 1.00)", bank, 0.50, 1e-8);
+
+   //--- the same numbers with the STALE realized of the old session --
+   //--- give the wrong bank the smoke test showed (+2.94) ------------
+   double stale = 1.50 + shred;          // position 1 + shred, never reset
+   double wrongDelta = TP_Bank_CloseDelta(stale, -1.00);
+   TP_CheckEq("with the stale realized the close would book the old money again",
+              wrongDelta, -2.07, 1e-8);
+   TP_Check("the stale bookkeeping does not equal the realised sum",
+            MathAbs((1.07 + wrongDelta) - 0.50) > 0.01);
+  }
+
+//+------------------------------------------------------------------+
 //| OnStart - run every test                                          |
 //+------------------------------------------------------------------+
 void OnStart()
@@ -622,6 +685,7 @@ void OnStart()
    Test_FileRoundTrip();
    Test_Dedup();
    Test_DecisionHelpers();
+   Test_BankAccounting();
 
    Print("=====================================================");
    Print(StringFormat("  self test finished: %d passed, %d failed", g_passed, g_failed));

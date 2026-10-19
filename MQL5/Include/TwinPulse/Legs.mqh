@@ -286,13 +286,10 @@ bool TP_Legs_OpenOne(const int legIndex, const bool isReopen)
 
    g_tp.legs[legIndex].used = true;
 
-   //--- fresh execution state for the new position -------------------
-   g_tp.legs[legIndex].beDone        = false;
-   g_tp.legs[legIndex].peakPrice     = 0.0;
-   g_tp.legs[legIndex].lastModify    = 0;
-   g_tp.legs[legIndex].modifyFails   = 0;
-   g_tp.legs[legIndex].modifyBackoff = 0;
-   g_tp.legs[legIndex].lastReason    = "";   // a new state may log again
+   //--- fresh execution state for the new position (per-position     ---
+   //--- fields restart: realized / booked / BE / modify state) -------
+   TP_State_NewPositionSession(legIndex);
+   g_tp.legs[legIndex].lastReason = "";   // a new state may log again
    return true;
   }
 
@@ -307,14 +304,25 @@ void TP_Legs_RegisterClose(const int legIndex, const string reason, const double
 
    ulong posId = g_tp.legs[legIndex].positionId;
    double price = closePrice;
-   double cumulative = TP_State_RealizedForPosition(posId, g_tp.legs[legIndex].openTime, price);
-   double delta = cumulative - g_tp.legs[legIndex].realized;
-   g_tp.legs[legIndex].realized = cumulative;
+   //--- pos_net: the full realised P/L of the position from the deal
+   //--- history (all OUT deals incl. partial shreds, plus commission
+   //--- and swap). The bank books only the delta of this session -----
+   double posNet = TP_State_RealizedForPosition(posId, g_tp.legs[legIndex].openTime, price);
+   double delta  = TP_Bank_CloseDelta(g_tp.legs[legIndex].realized, posNet);
+   g_tp.legs[legIndex].realized = posNet;
    TP_Bank_Add(delta);
 
-   //--- spread accounting for the decision analysis -----------------
+   //--- accounting guard (the bank must always equal the sum of the -
+   //--- realised money): a delta larger than the position ever moved
+   //--- means a stale per-position field -----------------------------
+   if(MathAbs(delta) > MathAbs(posNet) + 0.01)
+      TP_LogWarn(StringFormat("bank delta mismatch on %s: delta %.2f for a position that realised %.2f",
+                              TP_LegName(legIndex), delta, posNet));
+
+   //--- spread accounting for the decision analysis: gross = pos_net
+   //--- + spread_cost, the totals come from pos_net -----------------
    double spreadCost = g_tp.legs[legIndex].spreadCost;
-   double gross      = TP_GrossBeforeSpread(delta, spreadCost);
+   double gross      = TP_GrossBeforeSpread(posNet, spreadCost);
    g_stats.grossBeforeSpread += gross;
    g_stats.spreadPaid        += spreadCost;
 
@@ -324,7 +332,7 @@ void TP_Legs_RegisterClose(const int legIndex, const string reason, const double
    g_tp.legs[legIndex].lastReason = "";   // the state changed, a block may log again
 
    TP_LogLegCSV(legIndex, g_tp.cycleId, g_tp.legs[legIndex].volume,
-                g_tp.legs[legIndex].openPrice, price, delta, reason,
+                g_tp.legs[legIndex].openPrice, price, delta, posNet, reason,
                 g_tp.bank, TP_RegimeName(g_tp.regime),
                 TP_Exec_CurrentSpreadPrice(), g_tp.atr5,
                 g_tp.legs[legIndex].spreadOpen, spreadCost, gross);

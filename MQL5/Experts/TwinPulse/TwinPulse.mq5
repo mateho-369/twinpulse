@@ -185,7 +185,8 @@ void OnDeinit(const int reason)
    //--- fixes. Print() so the lines land in the tester journal.       --
    //--- "log lines written" counts TwinPulse.log lines exactly (the   --
    //--- file can hold less after a 2 MB rotation), "csv rows" the     --
-   //--- legs / cycles CSV rows.                                       --
+   //--- legs / cycles CSV rows. "gross before spread" / "spread paid" --
+   //--- come from pos_net (the full realised P/L of each position).   --
    string execSummary = StringFormat(
       "exec summary: modify attempts %d, modify failures %d, closes %d, close failures %d, Close By %d, STOP_THROUGH %d, log lines written %d, csv rows written %d, duplicates suppressed %d, gross before spread %.2f, spread paid %.2f",
       g_stats.modifyAttempts, g_stats.modifyFailures,

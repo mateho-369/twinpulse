@@ -50,6 +50,17 @@ double TP_Bank_AfterShred(const double bank, const double lossOfStep, const doub
   }
 
 //+------------------------------------------------------------------+
+//| TP_Bank_CloseDelta - the money a close must add to the bank       |
+//|  delta = cumulative(position) - realized(the same position so     |
+//|  far). The bank must always end up as the sum of the realised     |
+//|  money of all closed positions (pure).                            |
+//+------------------------------------------------------------------+
+double TP_Bank_CloseDelta(const double legRealized, const double posCumulative)
+  {
+   return posCumulative - legRealized;
+  }
+
+//+------------------------------------------------------------------+
 //| TP_Bank_Add - add realised money to the bank and to the cycle     |
 //+------------------------------------------------------------------+
 void TP_Bank_Add(const double amount)

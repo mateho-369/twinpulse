@@ -912,7 +912,7 @@ bool TP_IsFriday(const datetime t)
 #define TP_LOG_MAX_BYTES  2097152     // 2 MB, then the log file is recycled
 
 #define TP_LOG_HEADER     "time,level,symbol,magic,message"
-#define TP_LEGS_HEADER    "time,cycle,leg,side,volume,open_price,close_price,reason,profit,bank,regime,spread,atr5,spread_open,spread_cost,gross"
+#define TP_LEGS_HEADER    "time,cycle,leg,side,volume,open_price,close_price,reason,profit,pos_net,bank,regime,spread,atr5,spread_open,spread_cost,gross"
 #define TP_CYCLES_HEADER  "time,cycle_id,start_time,end_time,regime,legs_opened,legs_closed,realized,bank,shredded,reason,spread,atr5"
 
 #define TP_FLUSH_INTERVAL_MS   60000  // FileFlush at most once per 60 s
@@ -1095,17 +1095,18 @@ void TP_CsvAppend(const string fileName, const string header, const string line)
 //+------------------------------------------------------------------+
 void TP_LogLegCSV(const int legIndex, const int cycleId, const double volume,
                   const double openPrice, const double closePrice, const double profit,
-                  const string reason, const double bank, const string regime,
+                  const double posNet, const string reason,
+                  const double bank, const string regime,
                   const double spread, const double atr5,
                   const double spreadOpen, const double spreadCost, const double gross)
   {
-   string line = StringFormat("%s,%d,%s,%s,%.2f,%s,%s,%s,%.2f,%.2f,%s,%.3f,%.3f,%.3f,%.2f,%.2f",
+   string line = StringFormat("%s,%d,%s,%s,%.2f,%s,%s,%s,%.2f,%.2f,%.2f,%s,%.3f,%.3f,%.3f,%.2f,%.2f",
                               TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS),
                               cycleId, TP_LegName(legIndex),
                               TP_LegIsBuy(legIndex) ? "BUY" : "SELL",
                               volume,
                               TP_Str(openPrice, 3), TP_Str(closePrice, 3),
-                              reason, profit, bank, regime, spread, atr5,
+                              reason, profit, posNet, bank, regime, spread, atr5,
                               spreadOpen, spreadCost, gross);
    TP_CsvAppend(TP_LEGS_CSV, TP_LEGS_HEADER, line);
   }
@@ -1409,10 +1410,16 @@ void TP_State_SyncPositions(void)
 
       g_tp.legs[legIdx].open       = true;
       g_tp.legs[legIdx].ticket     = ticket;
-      //--- a NEW position session may be booked to the legs.csv again -
+      //--- a NEW position session: every per-position field restarts
+      //--- (realized / booked / break-even / modify state) -----------
       ulong newId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
       if(g_tp.legs[legIdx].positionId != newId)
-         g_tp.legs[legIdx].booked = false;
+        {
+         TP_State_NewPositionSession(legIdx);
+         //--- the spread at the open is unknown after a resync ------
+         g_tp.legs[legIdx].spreadOpen = 0.0;
+         g_tp.legs[legIdx].spreadCost = 0.0;
+        }
       g_tp.legs[legIdx].positionId = newId;
       g_tp.legs[legIdx].type       = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
       g_tp.legs[legIdx].volume     = PositionGetDouble(POSITION_VOLUME);
@@ -1508,6 +1515,29 @@ double TP_State_TotalVolume(void)
 double TP_State_CycleTotal(void)
   {
    return g_tp.cycleRealized + TP_State_AllFloating();
+  }
+
+//+------------------------------------------------------------------+
+//| TP_State_NewPositionSession - a leg gets a NEW position           |
+//|  Every per-position field restarts. Without this reset the bank   |
+//|  accounting breaks: legs[i].realized still holds the money of the |
+//|  previous position and RegisterClose books                       |
+//|  delta = cumulative(new) - realized(old + new) (smoke test:       |
+//|  "bank delta mismatch", 84 of 507 shreds wrong).                 |
+//|  spreadOpen / spreadCost are per position too: TP_Exec_OpenLeg    |
+//|  sets them when WE open; a resync that finds a new position sets  |
+//|  them to 0 (unknown).                                            |
+//+------------------------------------------------------------------+
+void TP_State_NewPositionSession(const int legIndex)
+  {
+   if(legIndex < 0 || legIndex >= TP_LEG_COUNT) return;
+   g_tp.legs[legIndex].realized      = 0.0;    // money of THIS position only
+   g_tp.legs[legIndex].booked        = false;  // one legs.csv row per session
+   g_tp.legs[legIndex].beDone        = false;
+   g_tp.legs[legIndex].peakPrice     = 0.0;
+   g_tp.legs[legIndex].lastModify    = 0;
+   g_tp.legs[legIndex].modifyFails   = 0;
+   g_tp.legs[legIndex].modifyBackoff = 0;
   }
 
 //+------------------------------------------------------------------+
@@ -3055,6 +3085,17 @@ double TP_Bank_AfterShred(const double bank, const double lossOfStep, const doub
   }
 
 //+------------------------------------------------------------------+
+//| TP_Bank_CloseDelta - the money a close must add to the bank       |
+//|  delta = cumulative(position) - realized(the same position so     |
+//|  far). The bank must always end up as the sum of the realised     |
+//|  money of all closed positions (pure).                            |
+//+------------------------------------------------------------------+
+double TP_Bank_CloseDelta(const double legRealized, const double posCumulative)
+  {
+   return posCumulative - legRealized;
+  }
+
+//+------------------------------------------------------------------+
 //| TP_Bank_Add - add realised money to the bank and to the cycle     |
 //+------------------------------------------------------------------+
 void TP_Bank_Add(const double amount)
@@ -3457,13 +3498,10 @@ bool TP_Legs_OpenOne(const int legIndex, const bool isReopen)
 
    g_tp.legs[legIndex].used = true;
 
-   //--- fresh execution state for the new position -------------------
-   g_tp.legs[legIndex].beDone        = false;
-   g_tp.legs[legIndex].peakPrice     = 0.0;
-   g_tp.legs[legIndex].lastModify    = 0;
-   g_tp.legs[legIndex].modifyFails   = 0;
-   g_tp.legs[legIndex].modifyBackoff = 0;
-   g_tp.legs[legIndex].lastReason    = "";   // a new state may log again
+   //--- fresh execution state for the new position (per-position     ---
+   //--- fields restart: realized / booked / BE / modify state) -------
+   TP_State_NewPositionSession(legIndex);
+   g_tp.legs[legIndex].lastReason = "";   // a new state may log again
    return true;
   }
 
@@ -3478,14 +3516,25 @@ void TP_Legs_RegisterClose(const int legIndex, const string reason, const double
 
    ulong posId = g_tp.legs[legIndex].positionId;
    double price = closePrice;
-   double cumulative = TP_State_RealizedForPosition(posId, g_tp.legs[legIndex].openTime, price);
-   double delta = cumulative - g_tp.legs[legIndex].realized;
-   g_tp.legs[legIndex].realized = cumulative;
+   //--- pos_net: the full realised P/L of the position from the deal
+   //--- history (all OUT deals incl. partial shreds, plus commission
+   //--- and swap). The bank books only the delta of this session -----
+   double posNet = TP_State_RealizedForPosition(posId, g_tp.legs[legIndex].openTime, price);
+   double delta  = TP_Bank_CloseDelta(g_tp.legs[legIndex].realized, posNet);
+   g_tp.legs[legIndex].realized = posNet;
    TP_Bank_Add(delta);
 
-   //--- spread accounting for the decision analysis -----------------
+   //--- accounting guard (the bank must always equal the sum of the -
+   //--- realised money): a delta larger than the position ever moved
+   //--- means a stale per-position field -----------------------------
+   if(MathAbs(delta) > MathAbs(posNet) + 0.01)
+      TP_LogWarn(StringFormat("bank delta mismatch on %s: delta %.2f for a position that realised %.2f",
+                              TP_LegName(legIndex), delta, posNet));
+
+   //--- spread accounting for the decision analysis: gross = pos_net
+   //--- + spread_cost, the totals come from pos_net -----------------
    double spreadCost = g_tp.legs[legIndex].spreadCost;
-   double gross      = TP_GrossBeforeSpread(delta, spreadCost);
+   double gross      = TP_GrossBeforeSpread(posNet, spreadCost);
    g_stats.grossBeforeSpread += gross;
    g_stats.spreadPaid        += spreadCost;
 
@@ -3495,7 +3544,7 @@ void TP_Legs_RegisterClose(const int legIndex, const string reason, const double
    g_tp.legs[legIndex].lastReason = "";   // the state changed, a block may log again
 
    TP_LogLegCSV(legIndex, g_tp.cycleId, g_tp.legs[legIndex].volume,
-                g_tp.legs[legIndex].openPrice, price, delta, reason,
+                g_tp.legs[legIndex].openPrice, price, delta, posNet, reason,
                 g_tp.bank, TP_RegimeName(g_tp.regime),
                 TP_Exec_CurrentSpreadPrice(), g_tp.atr5,
                 g_tp.legs[legIndex].spreadOpen, spreadCost, gross);
@@ -4249,7 +4298,8 @@ void OnDeinit(const int reason)
    //--- fixes. Print() so the lines land in the tester journal.       --
    //--- "log lines written" counts TwinPulse.log lines exactly (the   --
    //--- file can hold less after a 2 MB rotation), "csv rows" the     --
-   //--- legs / cycles CSV rows.                                       --
+   //--- legs / cycles CSV rows. "gross before spread" / "spread paid" --
+   //--- come from pos_net (the full realised P/L of each position).   --
    string execSummary = StringFormat(
       "exec summary: modify attempts %d, modify failures %d, closes %d, close failures %d, Close By %d, STOP_THROUGH %d, log lines written %d, csv rows written %d, duplicates suppressed %d, gross before spread %.2f, spread paid %.2f",
       g_stats.modifyAttempts, g_stats.modifyFailures,

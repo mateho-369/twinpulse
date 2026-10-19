@@ -19,7 +19,7 @@
 #define TP_LOG_MAX_BYTES  2097152     // 2 MB, then the log file is recycled
 
 #define TP_LOG_HEADER     "time,level,symbol,magic,message"
-#define TP_LEGS_HEADER    "time,cycle,leg,side,volume,open_price,close_price,reason,profit,bank,regime,spread,atr5,spread_open,spread_cost,gross"
+#define TP_LEGS_HEADER    "time,cycle,leg,side,volume,open_price,close_price,reason,profit,pos_net,bank,regime,spread,atr5,spread_open,spread_cost,gross"
 #define TP_CYCLES_HEADER  "time,cycle_id,start_time,end_time,regime,legs_opened,legs_closed,realized,bank,shredded,reason,spread,atr5"
 
 #define TP_FLUSH_INTERVAL_MS   60000  // FileFlush at most once per 60 s
@@ -202,17 +202,18 @@ void TP_CsvAppend(const string fileName, const string header, const string line)
 //+------------------------------------------------------------------+
 void TP_LogLegCSV(const int legIndex, const int cycleId, const double volume,
                   const double openPrice, const double closePrice, const double profit,
-                  const string reason, const double bank, const string regime,
+                  const double posNet, const string reason,
+                  const double bank, const string regime,
                   const double spread, const double atr5,
                   const double spreadOpen, const double spreadCost, const double gross)
   {
-   string line = StringFormat("%s,%d,%s,%s,%.2f,%s,%s,%s,%.2f,%.2f,%s,%.3f,%.3f,%.3f,%.2f,%.2f",
+   string line = StringFormat("%s,%d,%s,%s,%.2f,%s,%s,%s,%.2f,%.2f,%.2f,%s,%.3f,%.3f,%.3f,%.2f,%.2f",
                               TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS),
                               cycleId, TP_LegName(legIndex),
                               TP_LegIsBuy(legIndex) ? "BUY" : "SELL",
                               volume,
                               TP_Str(openPrice, 3), TP_Str(closePrice, 3),
-                              reason, profit, bank, regime, spread, atr5,
+                              reason, profit, posNet, bank, regime, spread, atr5,
                               spreadOpen, spreadCost, gross);
    TP_CsvAppend(TP_LEGS_CSV, TP_LEGS_HEADER, line);
   }

@@ -97,6 +97,38 @@ The format follows `Keep a Changelog`, the project uses semantic versioning.
 
 ### Fixed
 
+* **Bank accounting (the bank bug):** `legs[i].realized` was reset to 0
+  only at cycle start, so a RE-OPENED leg kept the realised money of its
+  previous position and `RegisterClose` booked
+  `delta = cumulative(new) - realized(old + new)` - the old money went
+  into the bank a second time (84 of 507 shreds in the smoke test; the
+  "bank 0.49 -> 3.00 on a realised -0.43" line). Every per-position
+  field (`realized`, `booked`, break-even / modify state) now restarts
+  with the new position (`TP_State_NewPositionSession`, called from
+  `TP_Legs_OpenOne` and from `TP_State_SyncPositions` when the position
+  id changes). A runtime WARN `bank delta mismatch` fires when a close
+  books more than the position ever moved, and the SelfTest simulates
+  close -> re-open -> shred -> close and asserts that the bank equals
+  the sum of the realised money. **Earlier test results (smoke3_A /
+  smoke4_A) were produced with the bank bug and will not reproduce -
+  the shred and basket-target decisions change with the corrected
+  bank.**
+* "gross before spread" was computed from the bank delta, which is 0 for
+  legs closed by a full shred: `TwinPulse_legs.csv` now has a `pos_net`
+  column (the full realised P/L of the position from the deal history,
+  all OUT deals including partial shreds, plus commission and swap),
+  `gross = pos_net + spread_cost`, the OnDeinit totals come from
+  `pos_net`, and `tools/summarize_batch.py` uses `pos_net` for every
+  net and checks `sum(pos_net)` against the report net profit
+  (`**MISMATCH**` in SUMMARY.md when they disagree by more than 1.00).
+* `tools/run_batch.ps1` no longer touches tracked files (the run `.ini`
+  files are generated into `<DATA>\tester_local\decision\`) and the
+  INSTALL `.set` copy is optional (try/catch + warning; the tester
+  reads DATA, so a `PermissionDenied` in Program Files is no longer
+  fatal). The Close By race ("failed close position #0 buy 0 by
+  position #110", one per long run) is confirmed benign in the code:
+  the vanished ticket ends as `TP_CLOSE_GONE` + resync and is not
+  counted as a failure.
 * Every closed leg now appears in `TwinPulse_legs.csv` **exactly once**
   with its real exit reason: `RegisterClose` books a leg only once per
   position (a `booked` flag per leg, cleared when a new position appears),

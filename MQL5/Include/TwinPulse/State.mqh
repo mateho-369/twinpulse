@@ -276,10 +276,16 @@ void TP_State_SyncPositions(void)
 
       g_tp.legs[legIdx].open       = true;
       g_tp.legs[legIdx].ticket     = ticket;
-      //--- a NEW position session may be booked to the legs.csv again -
+      //--- a NEW position session: every per-position field restarts
+      //--- (realized / booked / break-even / modify state) -----------
       ulong newId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
       if(g_tp.legs[legIdx].positionId != newId)
-         g_tp.legs[legIdx].booked = false;
+        {
+         TP_State_NewPositionSession(legIdx);
+         //--- the spread at the open is unknown after a resync ------
+         g_tp.legs[legIdx].spreadOpen = 0.0;
+         g_tp.legs[legIdx].spreadCost = 0.0;
+        }
       g_tp.legs[legIdx].positionId = newId;
       g_tp.legs[legIdx].type       = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
       g_tp.legs[legIdx].volume     = PositionGetDouble(POSITION_VOLUME);
@@ -375,6 +381,29 @@ double TP_State_TotalVolume(void)
 double TP_State_CycleTotal(void)
   {
    return g_tp.cycleRealized + TP_State_AllFloating();
+  }
+
+//+------------------------------------------------------------------+
+//| TP_State_NewPositionSession - a leg gets a NEW position           |
+//|  Every per-position field restarts. Without this reset the bank   |
+//|  accounting breaks: legs[i].realized still holds the money of the |
+//|  previous position and RegisterClose books                       |
+//|  delta = cumulative(new) - realized(old + new) (smoke test:       |
+//|  "bank delta mismatch", 84 of 507 shreds wrong).                 |
+//|  spreadOpen / spreadCost are per position too: TP_Exec_OpenLeg    |
+//|  sets them when WE open; a resync that finds a new position sets  |
+//|  them to 0 (unknown).                                            |
+//+------------------------------------------------------------------+
+void TP_State_NewPositionSession(const int legIndex)
+  {
+   if(legIndex < 0 || legIndex >= TP_LEG_COUNT) return;
+   g_tp.legs[legIndex].realized      = 0.0;    // money of THIS position only
+   g_tp.legs[legIndex].booked        = false;  // one legs.csv row per session
+   g_tp.legs[legIndex].beDone        = false;
+   g_tp.legs[legIndex].peakPrice     = 0.0;
+   g_tp.legs[legIndex].lastModify    = 0;
+   g_tp.legs[legIndex].modifyFails   = 0;
+   g_tp.legs[legIndex].modifyBackoff = 0;
   }
 
 //+------------------------------------------------------------------+

@@ -131,6 +131,7 @@ class Legs(object):
     def __init__(self):
         self.rows = []
         self.has_spread = False
+        self.has_pos_net = False
 
     def load(self, path):
         if not os.path.isfile(path):
@@ -139,7 +140,16 @@ class Legs(object):
             for r in csv.DictReader(f):
                 if (r.get("spread_open") or "").strip() != "":
                     self.has_spread = True
+                if (r.get("pos_net") or "").strip() != "":
+                    self.has_pos_net = True
                 self.rows.append(r)
+
+    def nval(self, r):
+        """the realised money of the position: pos_net (full P/L incl.
+        partial shreds, commission and swap); profit for old CSVs"""
+        if self.has_pos_net:
+            return self._f(r, "pos_net")
+        return self._f(r, "profit")
 
     @staticmethod
     def _close(r):
@@ -160,7 +170,7 @@ class Legs(object):
 
     def net(self, rows=None):
         rows = self.rows if rows is None else rows
-        return sum(self._f(r, "profit") for r in rows)
+        return sum(self.nval(r) for r in rows)
 
     def extra_at_ref(self, rows, ref_spread, contract_size):
         """sum(max(0, ref_spread - spread_open) x volume x contract)"""
@@ -185,7 +195,7 @@ class Legs(object):
         gap = ref_spread - self._f(r, "spread_open") if self.has_spread else 0.0
         if gap < 0.0:
             gap = 0.0
-        return self._f(r, "profit") - gap * self._f(r, "volume") * contract_size
+        return self.nval(r) - gap * self._f(r, "volume") * contract_size
 
     def count(self, rows=None):
         rows = self.rows if rows is None else rows
@@ -203,8 +213,8 @@ class Legs(object):
 
     def pf(self, rows=None):
         rows = self.rows if rows is None else rows
-        pos = sum(self._f(r, "profit") for r in rows if self._f(r, "profit") > 0)
-        neg = sum(self._f(r, "profit") for r in rows if self._f(r, "profit") < 0)
+        pos = sum(self.nval(r) for r in rows if self.nval(r) > 0)
+        neg = sum(self.nval(r) for r in rows if self.nval(r) < 0)
         return self._pf_of_values(pos, neg)
 
     def pf_ref(self, rows, ref_spread, contract_size):
@@ -243,7 +253,7 @@ class Legs(object):
             k = keyfn(r)
             e = out.setdefault(k, [0, 0.0, 0.0])
             e[0] += 1
-            e[1] += self._f(r, "profit")
+            e[1] += self.nval(r)
             e[2] += self.profit_ref_of(r, ref_spread, contract_size)
         return out
 
@@ -419,6 +429,24 @@ def main():
 
     allg = {v: gates(v) for v in VARIANTS}
 
+    # ---- pos_net vs report net (the money must match) --------------
+    def report_net_total(rep):
+        vals, _ = pick(rep, "total net profit")
+        if vals[0] is not None:
+            return vals[0]
+        parts = [x for x in (vals[1], vals[2]) if x is not None]
+        return sum(parts) if parts else None
+
+    posnet = {}
+    for v in VARIANTS:
+        legs = data[v]["legs"]
+        s = legs.net()
+        rn = report_net_total(data[v]["report"])
+        if rn is None or not legs.rows:
+            posnet[v] = (s, rn, None)
+            continue
+        posnet[v] = (s, rn, abs(s - rn) <= 1.00)
+
     # ---- the header block (symbol specs + the run's spread) ---------
     head = []
     head.append("## Symbol specs")
@@ -469,8 +497,10 @@ def main():
     lines.append("period %s .. %s, forward starts %s (ForwardMode 2 = forward 1/3)."
                  % (args.d_from, args.d_to, fwd_start.strftime("%Y.%m.%d")))
     lines.append("Report fields are taken from the tester report; legs / gross / spread")
-    lines.append("from `TwinPulse_legs.csv`. Gates use the FORWARD column (PF, DD, RF)")
-    lines.append("and the worse of the two cost series (see docs/DECISION_RULES.md).")
+    lines.append("from `TwinPulse_legs.csv`. Every legs-level net uses the `pos_net`")
+    lines.append("column (the full realised P/L of the position). Gates use the FORWARD")
+    lines.append("column (PF, DD, RF) and the worse of the two cost series")
+    lines.append("(see docs/DECISION_RULES.md).")
     lines.append("net@ref = net at the reference spread, from the legs.csv `spread_open` column.")
     lines.append("")
     lines.extend(head)
@@ -498,6 +528,25 @@ def main():
     lines.append("better RANDOM control: forward PF %s (report), %s (at reference spread)"
                  % (fmt(rnd_pf), fmt(rnd_pf_ref)))
     lines.append("")
+    lines.append("## pos_net vs report net (must match within 1.00)")
+    lines.append("")
+    lines.append("| variant | sum(pos_net) | report net | check |")
+    lines.append("|---|---|---|---|")
+    for v in VARIANTS:
+        s, rn, ok = posnet[v]
+        if ok is None:
+            mark = NA
+        elif ok:
+            mark = "OK"
+        else:
+            mark = "**MISMATCH**"
+        lines.append("| %s | %s | %s | %s |" % (v, fmt(s), fmt(rn), mark))
+    lines.append("")
+    bad = [v for v in VARIANTS if posnet[v][2] is False]
+    if bad:
+        lines.append("**MISMATCH**: sum(pos_net) and the report net disagree for %s -"
+                     " the legs.csv accounting does not add up to the tester report." % ", ".join(bad))
+        lines.append("")
 
     # ---- per variant details ----------------------------------------
     lines.append("## Per-variant details")
@@ -510,6 +559,12 @@ def main():
             lines.append("no legs.csv rows.")
             lines.append("")
             continue
+        s, rn, ok = posnet[v]
+        if ok is None:
+            lines.append("sum(pos_net) %s vs report net: %s" % (fmt(s), fmt(rn)))
+        else:
+            lines.append("sum(pos_net) %s vs report net %s: %s"
+                         % (fmt(s), fmt(rn), "OK" if ok else "**MISMATCH**"))
         byyear = legs.by_ref(lambda r: r["time"][:4], legs.rows, ref, csize)
         bymonth = legs.by_ref(lambda r: r["time"][:7], legs.rows, ref, csize)
         byreason = legs.by_ref(lambda r: r.get("reason", "?"), legs.rows, ref, csize)
