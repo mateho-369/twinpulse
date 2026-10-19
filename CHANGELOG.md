@@ -55,6 +55,19 @@ The format follows `Keep a Changelog`, the project uses semantic versioning.
   `TP_BreakEvenArmDistance` = `max(BE_ATR * ATR, spread + min stop
   distance + spread)`: the break even stop must be placeable with room
   the moment it arms.
+* Floating point noise at the exact boundary of a stop rule: a raw
+  comparison like `MathAbs(market - level) <= freeze * point` failed at
+  the exact boundary (`0.030000000000654836 > 0.03`), so a legal modify
+  was wrongly refused. Every stop / freeze / stops-level boundary
+  decision is now taken in **integer points** (`TP_PointsDelta` /
+  `TP_PointsBetween` = `MathRound` of the price difference in points):
+  `TP_StopFrozen` (boundary = frozen), `TP_StopThroughMarket` (boundary =
+  through), `TP_StopIsBetter` (within one point = not better),
+  `TP_ClampStop` (exactly the minimum distance = legal, kept), the
+  break-even arm decision `TP_BreakEvenArmed` (boundary = armed), the
+  stops-level check of `TP_Exec_OpenLeg` and the never-widen /
+  nothing-to-do checks of `TP_Exec_ModifySL`. A 1e-12 difference can
+  never flip one of these decisions again.
 * `FILE_COMMON` was passed as the **4th** `FileOpen` argument (the codepage!)
   instead of OR-ed into `open_flags` in `TwinPulseNewsExport.mq5`,
   `Logger.mqh` and `News.mqh`: the signature is

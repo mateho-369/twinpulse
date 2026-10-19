@@ -220,15 +220,20 @@ bool TP_Exec_OpenLeg(const int legIndex, const double volume, const double sl, c
    price = TP_Exec_NormalizePrice(price);
 
    //--- stops must respect the minimum stop distance ------------------
+   //--- decided in integer points, a 1e-12 noise must not flip it -----
    double minDist = TP_Exec_StopDistance();
    double slPrice = TP_Exec_NormalizePrice(sl);
+   long minPts = 1;
+   if(g_point > 0.0) minPts = (long)MathRound(minDist / g_point);
    if(isBuy)
      {
-      if(price - slPrice < minDist) slPrice = TP_Exec_NormalizePrice(price - minDist);
+      if(TP_PointsDelta(price, slPrice, g_point) < minPts)
+         slPrice = TP_Exec_NormalizePrice(price - minPts * g_point);
      }
    else
      {
-      if(slPrice - price < minDist) slPrice = TP_Exec_NormalizePrice(price + minDist);
+      if(TP_PointsDelta(slPrice, price, g_point) < minPts)
+         slPrice = TP_Exec_NormalizePrice(price + minPts * g_point);
      }
 
    MqlTradeRequest request;
@@ -478,15 +483,17 @@ bool TP_Exec_ModifySL(const ulong ticket, const double newSl, const double newTp
    double sl = TP_Exec_NormalizePrice(newSl);
    double tp = TP_Exec_NormalizePrice(newTp);
 
-   //--- never widen a stop -------------------------------------------
+   //--- never widen a stop (integer points) --------------------------
    if(curSl > 0.0)
      {
-      if(isBuy && sl > 0.0 && sl < curSl) sl = curSl;
-      if(!isBuy && sl > 0.0 && sl > curSl) sl = curSl;
+      if(isBuy && sl > 0.0 && TP_PointsDelta(sl, curSl, g_point) < 0) sl = curSl;
+      if(!isBuy && sl > 0.0 && TP_PointsDelta(sl, curSl, g_point) > 0) sl = curSl;
      }
 
    //--- never change a stop into something invalid -------------------
-   if(sl > 0.0 && MathAbs(sl - curSl) < g_point && MathAbs(tp - curTp) < g_point)
+   //--- nothing to do when both levels are within one point -----------
+   if(sl > 0.0 && TP_PointsBetween(sl, curSl, g_point) < 1 &&
+      TP_PointsBetween(tp, curTp, g_point) < 1)
       return true;    // nothing to do
 
    MqlTradeRequest request;

@@ -421,7 +421,7 @@ void TP_Legs_ManageRunner(const int legIndex)
       double trailDist = Trail_ATR * atr;
       desiredSl = isBuy ? (best - trailDist) : (best + trailDist);
      }
-   else if(peakMoved >= beDist)
+   else if(TP_BreakEvenArmed(peakMoved, beDist, g_point))
      {
       //--- break even: the entry plus the spread ---------------------
       desiredSl = isBuy ? (entry + spread) : (entry - spread);
@@ -431,7 +431,7 @@ void TP_Legs_ManageRunner(const int legIndex)
 
    //--- the price came back through the desired stop: the modify would
    //--- be invalid, close the leg at the market instead ---------------
-   if(TP_StopThroughMarket(isBuy, desiredSl, tick.bid, tick.ask))
+   if(TP_StopThroughMarket(isBuy, desiredSl, tick.bid, tick.ask, g_point))
      {
       TP_LogInfo(StringFormat("STOP_THROUGH: %s stop %s is beyond the market (bid %s, ask %s), closing at the market.",
                               TP_LegName(legIndex), TP_Str(desiredSl, g_digits),
@@ -464,7 +464,7 @@ void TP_Legs_ManageRunner(const int legIndex)
                                      stopsLevel, freezeLevel, g_point));
 
    //--- a stop that does not improve the current one is not sent -----
-   if(!TP_StopIsBetter(isBuy, clampedSl, currentSl))
+   if(!TP_StopIsBetter(isBuy, clampedSl, currentSl, g_point))
       return;
 
    if(TP_Exec_ModifySL(g_tp.legs[legIndex].ticket, clampedSl, g_tp.legs[legIndex].tp))

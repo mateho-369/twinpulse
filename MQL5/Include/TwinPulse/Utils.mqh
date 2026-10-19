@@ -76,7 +76,39 @@ bool TP_MoneyNearZero(const double value)
 //| Stop helpers (pure). The broker rejects a stop that is too close  |
 //| to the market (SYMBOL_TRADE_STOPS_LEVEL) and freezes the modify   |
 //| of a level that is too close to it (SYMBOL_TRADE_FREEZE_LEVEL).   |
+//| Every boundary decision is taken in INTEGER POINTS: a 1e-12       |
+//| binary noise of the price arithmetic must never flip it.          |
 //+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| TP_PointsBetween - distance between two prices in integer points  |
+//+------------------------------------------------------------------+
+long TP_PointsBetween(const double price1, const double price2, const double point)
+  {
+   if(point <= 0.0) return 0;
+   return (long)MathRound(MathAbs(price1 - price2) / point);
+  }
+
+//+------------------------------------------------------------------+
+//| TP_PointsDelta - (price1 - price2) in signed integer points       |
+//+------------------------------------------------------------------+
+long TP_PointsDelta(const double price1, const double price2, const double point)
+  {
+   if(point <= 0.0) return 0;
+   return (long)MathRound((price1 - price2) / point);
+  }
+
+//+------------------------------------------------------------------+
+//| TP_StopMinPoints - minimum stop distance in points:               |
+//| max(stops, freeze, 1)                                             |
+//+------------------------------------------------------------------+
+long TP_StopMinPoints(const long stopsLevelPts, const long freezeLevelPts)
+  {
+   long pts = stopsLevelPts;
+   if(freezeLevelPts > pts) pts = freezeLevelPts;
+   if(pts < 1) pts = 1;
+   return pts;
+  }
 
 //+------------------------------------------------------------------+
 //| TP_StopMinDistance - minimum distance between the market and a    |
@@ -84,56 +116,68 @@ bool TP_MoneyNearZero(const double value)
 //+------------------------------------------------------------------+
 double TP_StopMinDistance(const long stopsLevelPts, const long freezeLevelPts, const double point)
   {
-   long pts = stopsLevelPts;
-   if(freezeLevelPts > pts) pts = freezeLevelPts;
-   if(pts < 1) pts = 1;
-   return (double)pts * point;
+   return (double)TP_StopMinPoints(stopsLevelPts, freezeLevelPts) * point;
   }
 
 //+------------------------------------------------------------------+
 //| TP_ClampStop - clamp a desired stop loss into the legal region    |
 //| BUY : sl <= bid - max(stops, freeze, 1) x point                   |
 //| SELL: sl >= ask + max(stops, freeze, 1) x point                   |
-//| A stop that is already legal is kept unchanged, a stop that is    |
-//| too close to the market is only moved away from it.               |
+//| A stop that is already legal (at least minPts points away, the    |
+//| boundary counts as legal) is kept unchanged, a stop that is too   |
+//| close to the market is only moved away from it.                   |
 //+------------------------------------------------------------------+
 double TP_ClampStop(const bool isBuy, const double desiredSl, const double bid, const double ask,
                     const long stopsLevelPts, const long freezeLevelPts, const double point)
   {
-   double minDist = TP_StopMinDistance(stopsLevelPts, freezeLevelPts, point);
-   if(isBuy) return MathMin(desiredSl, bid - minDist);
-   return MathMax(desiredSl, ask + minDist);
+   if(point <= 0.0) return desiredSl;
+   long minPts = TP_StopMinPoints(stopsLevelPts, freezeLevelPts);
+   if(isBuy)
+     {
+      //--- the stop must sit at least minPts points below the bid ---
+      if(TP_PointsDelta(bid, desiredSl, point) >= minPts) return desiredSl;
+      return bid - (double)minPts * point;
+     }
+   //--- the stop must sit at least minPts points above the ask -----
+   if(TP_PointsDelta(desiredSl, ask, point) >= minPts) return desiredSl;
+   return ask + (double)minPts * point;
   }
 
 //+------------------------------------------------------------------+
 //| TP_StopThroughMarket - the market already traded through the      |
 //| desired stop: the price came back through the trailing / break    |
 //| even level, the leg has to be closed at the market.               |
-//| BUY : bid <= desiredSl, SELL: ask >= desiredSl                    |
+//| BUY : bid <= desiredSl, SELL: ask >= desiredSl (the exact        |
+//| boundary counts as through, decided in integer points)            |
 //+------------------------------------------------------------------+
-bool TP_StopThroughMarket(const bool isBuy, const double desiredSl, const double bid, const double ask)
+bool TP_StopThroughMarket(const bool isBuy, const double desiredSl, const double bid, const double ask,
+                          const double point)
   {
    if(desiredSl <= 0.0) return false;
-   if(isBuy) return (bid <= desiredSl);
-   return (ask >= desiredSl);
+   if(isBuy) return (TP_PointsDelta(desiredSl, bid, point) >= 0);
+   return (TP_PointsDelta(desiredSl, ask, point) <= 0);
   }
 
 //+------------------------------------------------------------------+
 //| TP_StopIsBetter - is the candidate stop better than the current?  |
 //| BUY : higher is better, SELL: lower is better, a missing current  |
-//| stop (<= 0) makes every candidate better. Equal is not better.    |
+//| stop (<= 0) makes every candidate better. Equal (within one       |
+//| point) is not better.                                             |
 //+------------------------------------------------------------------+
-bool TP_StopIsBetter(const bool isBuy, const double candidateSl, const double currentSl)
+bool TP_StopIsBetter(const bool isBuy, const double candidateSl, const double currentSl,
+                     const double point)
   {
    if(candidateSl <= 0.0) return false;
    if(currentSl <= 0.0) return true;
-   if(isBuy) return (candidateSl > currentSl);
-   return (candidateSl < currentSl);
+   long diffPts = TP_PointsDelta(candidateSl, currentSl, point);
+   if(isBuy) return (diffPts > 0);
+   return (diffPts < 0);
   }
 
 //+------------------------------------------------------------------+
 //| TP_StopFrozen - is a stop / take profit level inside the freeze   |
 //| zone of the market? While it is, the server refuses a modify.     |
+//| The boundary counts as frozen, decided in integer points.         |
 //+------------------------------------------------------------------+
 bool TP_StopFrozen(const double marketPrice, const double level,
                    const long freezeLevelPts, const double point)
@@ -141,7 +185,8 @@ bool TP_StopFrozen(const double marketPrice, const double level,
    if(level <= 0.0) return false;
    if(freezeLevelPts <= 0) return false;
    if(point <= 0.0) return false;
-   return (MathAbs(marketPrice - level) <= (double)freezeLevelPts * point);
+   long distPts = (long)MathRound(MathAbs(marketPrice - level) / point);
+   return (distPts <= freezeLevelPts);
   }
 
 //+------------------------------------------------------------------+
@@ -160,6 +205,16 @@ double TP_BreakEvenArmDistance(const double beAtr, const double atr, const doubl
    double minArm = spread + TP_StopMinDistance(stopsLevelPts, freezeLevelPts, point) + spread;
    if(dist < minArm) dist = minArm;
    return dist;
+  }
+
+//+------------------------------------------------------------------+
+//| TP_BreakEvenArmed - is the peak profit far enough to arm the      |
+//| break even stop? Decided in integer points, the exact boundary    |
+//| counts as armed.                                                  |
+//+------------------------------------------------------------------+
+bool TP_BreakEvenArmed(const double peakMoved, const double beDist, const double point)
+  {
+   return (TP_PointsDelta(peakMoved, beDist, point) >= 0);
   }
 
 //+------------------------------------------------------------------+

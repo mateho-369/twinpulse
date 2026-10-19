@@ -358,27 +358,64 @@ void Test_StopClamp(void)
               TP_ClampStop(false, 4245.350, 4245.139, 4245.339, 20, 30, 0.001), 4245.369, 1e-8);
    TP_CheckEq("a sell stop below the ask is clamped above it",
               TP_ClampStop(false, 4244.900, 4245.139, 4245.339, 20, 30, 0.001), 4245.369, 1e-8);
+   //--- clamp boundary: exactly minPts points away is legal ---------
+   TP_CheckEq("BUY boundary: a stop exactly 30 points below the bid is kept",
+              TP_ClampStop(true, 4245.109, 4245.139, 4245.339, 20, 30, 0.001), 4245.109, 1e-8);
+   TP_CheckEq("BUY boundary: a noisy equal stop is kept",
+              TP_ClampStop(true, 4245.139 - 30 * 0.001, 4245.139, 4245.339, 20, 30, 0.001),
+              4245.139 - 30 * 0.001, 1e-8);
+   TP_CheckEq("BUY boundary: one point closer is pushed away",
+              TP_ClampStop(true, 4245.110, 4245.139, 4245.339, 20, 30, 0.001), 4245.109, 1e-8);
+   TP_CheckEq("SELL boundary: a stop exactly 30 points above the ask is kept",
+              TP_ClampStop(false, 4245.369, 4245.139, 4245.339, 20, 30, 0.001), 4245.369, 1e-8);
+   TP_CheckEq("SELL boundary: a noisy equal stop is kept",
+              TP_ClampStop(false, 4245.339 + 30 * 0.001, 4245.139, 4245.339, 20, 30, 0.001),
+              4245.339 + 30 * 0.001, 1e-8);
+   TP_CheckEq("SELL boundary: one point closer is pushed away",
+              TP_ClampStop(false, 4245.368, 4245.139, 4245.339, 20, 30, 0.001), 4245.369, 1e-8);
 
    //--- stop through: the example of the smoke test log -------------
    TP_Check("the buy stop of the log is beyond the bid (STOP_THROUGH)",
-            TP_StopThroughMarket(true, 4245.632, 4245.139, 4245.339));
+            TP_StopThroughMarket(true, 4245.632, 4245.139, 4245.339, 0.001));
    TP_Check("a buy stop below the bid is not through",
-            !TP_StopThroughMarket(true, 4244.0, 4245.139, 4245.339));
+            !TP_StopThroughMarket(true, 4244.0, 4245.139, 4245.339, 0.001));
    TP_Check("a sell stop above the ask is not through",
-            !TP_StopThroughMarket(false, 4246.0, 4245.139, 4245.339));
+            !TP_StopThroughMarket(false, 4246.0, 4245.139, 4245.339, 0.001));
    TP_Check("a sell stop below the ask is through",
-            TP_StopThroughMarket(false, 4245.200, 4245.139, 4245.339));
+            TP_StopThroughMarket(false, 4245.200, 4245.139, 4245.339, 0.001));
    TP_Check("a missing stop is never through the market",
-            !TP_StopThroughMarket(true, 0.0, 4245.139, 4245.339));
+            !TP_StopThroughMarket(true, 0.0, 4245.139, 4245.339, 0.001));
+   //--- the exact boundary counts as through, noise must not flip it -
+   TP_Check("BUY boundary: bid == stop is through",
+            TP_StopThroughMarket(true, 4245.220, 4245.220, 4245.420, 0.001));
+   TP_Check("BUY boundary: a noisy equal bid is through",
+            TP_StopThroughMarket(true, 4245.190 + 30 * 0.001, 4245.220, 4245.420, 0.001));
+   TP_Check("BUY boundary: bid 1 point above the stop is not through",
+            !TP_StopThroughMarket(true, 4245.220, 4245.221, 4245.421, 0.001));
+   TP_Check("SELL boundary: ask == stop is through",
+            TP_StopThroughMarket(false, 4245.220, 4245.020, 4245.220, 0.001));
+   TP_Check("SELL boundary: a noisy equal ask is through",
+            TP_StopThroughMarket(false, 4245.190 + 30 * 0.001, 4245.020, 4245.220, 0.001));
+   TP_Check("SELL boundary: ask 1 point below the stop is not through",
+            !TP_StopThroughMarket(false, 4245.220, 4245.019, 4245.219, 0.001));
 
    //--- better than the current stop --------------------------------
-   TP_Check("a higher buy stop is better", TP_StopIsBetter(true, 4245.0, 4244.0));
-   TP_Check("a lower buy stop is not better", !TP_StopIsBetter(true, 4243.0, 4244.0));
-   TP_Check("an equal buy stop is skipped", !TP_StopIsBetter(true, 4244.0, 4244.0));
-   TP_Check("a lower sell stop is better", TP_StopIsBetter(false, 4243.0, 4244.0));
-   TP_Check("a higher sell stop is not better", !TP_StopIsBetter(false, 4245.0, 4244.0));
-   TP_Check("any stop beats a missing one", TP_StopIsBetter(true, 1.0, 0.0));
-   TP_Check("a missing candidate is never better", !TP_StopIsBetter(true, 0.0, 0.0));
+   TP_Check("a higher buy stop is better", TP_StopIsBetter(true, 4245.0, 4244.0, 0.001));
+   TP_Check("a lower buy stop is not better", !TP_StopIsBetter(true, 4243.0, 4244.0, 0.001));
+   TP_Check("an equal buy stop is skipped", !TP_StopIsBetter(true, 4244.0, 4244.0, 0.001));
+   TP_Check("a lower sell stop is better", TP_StopIsBetter(false, 4243.0, 4244.0, 0.001));
+   TP_Check("a higher sell stop is not better", !TP_StopIsBetter(false, 4245.0, 4244.0, 0.001));
+   TP_Check("any stop beats a missing one", TP_StopIsBetter(true, 1.0, 0.0, 0.001));
+   TP_Check("a missing candidate is never better", !TP_StopIsBetter(true, 0.0, 0.0, 0.001));
+   //--- the exact boundary: equal (within one point) is not better ---
+   TP_Check("BUY boundary: 1 point higher is better",
+            TP_StopIsBetter(true, 4244.001, 4244.0, 0.001));
+   TP_Check("BUY boundary: a noisy equal stop is not better",
+            !TP_StopIsBetter(true, 4244.0 + 1e-12, 4244.0, 0.001));
+   TP_Check("SELL boundary: 1 point lower is better",
+            TP_StopIsBetter(false, 4243.999, 4244.0, 0.001));
+   TP_Check("SELL boundary: a noisy equal stop is not better",
+            !TP_StopIsBetter(false, 4244.0, 4244.0 + 1e-12, 0.001));
 
    //--- the freeze zone ---------------------------------------------
    TP_Check("price inside the freeze zone blocks the modify",
@@ -387,6 +424,11 @@ void Test_StopClamp(void)
             !TP_StopFrozen(4245.500, 4245.190, 30, 0.001));
    TP_Check("the freeze boundary itself blocks the modify",
             TP_StopFrozen(4245.220, 4245.190, 30, 0.001));
+   //--- boundary: one point outside is free, noise must not flip it --
+   TP_Check("one point beyond the freeze boundary allows the modify",
+            !TP_StopFrozen(4245.221, 4245.190, 30, 0.001));
+   TP_Check("the noisy freeze boundary blocks the modify",
+            TP_StopFrozen(4245.190 + 30 * 0.001, 4245.190, 30, 0.001));
    TP_Check("a missing level is never frozen",
             !TP_StopFrozen(4245.200, 0.0, 30, 0.001));
    TP_Check("a zero freeze level never blocks",
@@ -397,7 +439,7 @@ void Test_StopClamp(void)
    //--- while the bid was 4245.139: the market came back through the
    //--- desired stop, so the action is a market close, not a modify
    TP_Check("scenario: the invalid modify of the log is a STOP_THROUGH",
-            TP_StopThroughMarket(true, 4245.632, 4245.139, 4245.339));
+            TP_StopThroughMarket(true, 4245.632, 4245.139, 4245.339, 0.001));
    TP_CheckEq("scenario: the clamp alone would drop the stop under the bid",
               TP_ClampStop(true, 4245.632, 4245.139, 4245.339, 20, 30, 0.001), 4245.109, 1e-8);
 
@@ -412,6 +454,16 @@ void Test_StopClamp(void)
               TP_BreakEvenArmDistance(0.6, 0.0, 0.20, 20, 30, 0.001), 0.430, 1e-8);
    TP_Check("the arming floor is never below 2 x spread + min stop",
             TP_BreakEvenArmDistance(0.6, 0.10, 0.20, 20, 30, 0.001) >= 0.20 + 0.030 + 0.20);
+   //--- the arming decision: the exact boundary counts as armed ------
+   double armBoundary = TP_BreakEvenArmDistance(0.6, 0.10, 0.20, 20, 30, 0.001); // 0.430
+   TP_Check("BE arms exactly at the arm distance",
+            TP_BreakEvenArmed(armBoundary, armBoundary, 0.001));
+   TP_Check("BE arms with a noisy equal distance",
+            TP_BreakEvenArmed(armBoundary + 1e-12, armBoundary, 0.001));
+   TP_Check("BE does not arm one point below the arm distance",
+            !TP_BreakEvenArmed(armBoundary - 0.001, armBoundary, 0.001));
+   TP_Check("BE arms one point above the arm distance",
+            TP_BreakEvenArmed(armBoundary + 0.001, armBoundary, 0.001));
 
    //--- scenario: with the floor the break even stop is placeable    ---
    //--- and below the bid the moment the trigger arms -----------------
@@ -419,13 +471,13 @@ void Test_StopClamp(void)
    double bidS = 4200.0 + arm;
    double beSl = 4200.0 + 0.20;
    TP_Check("scenario: the break even stop is below the bid when it arms",
-            !TP_StopThroughMarket(true, beSl, bidS, bidS + 0.20));
+            !TP_StopThroughMarket(true, beSl, bidS, bidS + 0.20, 0.001));
    TP_CheckEq("scenario: the clamp keeps the break even stop (it has room)",
               TP_ClampStop(true, beSl, bidS, bidS + 0.20, 20, 30, 0.001), beSl, 1e-8);
    //--- the old naive trigger (0.6 x 0.10 = 0.06) armed while the bid
    //--- was still below the break even level: immediate STOP_THROUGH
    TP_Check("scenario: the old trigger armed through the market (why the floor exists)",
-            TP_StopThroughMarket(true, beSl, 4200.0 + 0.06, 4200.0 + 0.26));
+            TP_StopThroughMarket(true, beSl, 4200.0 + 0.06, 4200.0 + 0.26, 0.001));
   }
 
 //+------------------------------------------------------------------+
