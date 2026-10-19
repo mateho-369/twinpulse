@@ -236,6 +236,23 @@ copy "<REPO>\dist\TwinPulse_single.mq5" "<DATA>\MQL5\Experts\"
 
 ### ២. រត់ម្តងទៅគេង (PowerShell)
 
+> **ត្រូវបិទ MetaTrader 5 ឲ្យអស់សិន** (ទាំង tray icon)។ បើ MT5 កំពុងបើក
+> `terminal64.exe /config:` មិនដំណើរការទេ - process ថ្មីគ្រាន់តែបញ្ជូន
+> command line ទៅ instance ដែលបើកស្រាប់ រួចចេញវិញជាមួយ exit code 0
+> ដោយមិនរត់អ្វីទាល់តែសោះ។ Script ឥឡូវពិនិត្យរឿងនេះមុនរត់ ហើយបដិសេធ
+> បើឃើញ `terminal64` កំពុងដំណើរការ។
+
+សាកមួយ variant មុន (លឿន ~២ នាទី ដើម្បីឃើញថា pipeline ដំណើរការ)៖
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\run_batch.ps1 -Symbol XAUUSDm `
+    -FromDate 2026.08.01 -ToDate 2026.10.19 -Deposit 1000 `
+    -InstallDir "C:\Program Files\MetaTrader 5" `
+    -DataDir "<DataDir>" -Only V1_Full
+```
+
+បើ variant នោះចេញ `report + 2 CSV copied to ...` ស្អាត ទើបរត់ទាំង ៨៖
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\run_batch.ps1
 ```
@@ -255,6 +272,10 @@ script ដដែល - variant ដែលមានរបាយការណ៍រ�
 python tools\summarize_batch.py --data "<DataDir>" --from 2022.01.01 --to 2026.09.30 `
     --symbol XAUUSDm --contract-size 100 --ref-spread 0.20
 ```
+
+បើ `summarize_batch.py` ចេញ **NO DATA** ហើយមិនសរសេរឯកសារ: batch មិនបានរត់
+ពិតប្រាកដ (មើលចំណុច «ត្រូវបិទ MetaTrader 5» ខាងលើ) - វានឹងមិនដាក់
+verdict ពី folder ទទេទេ។
 
 អាន `reports\decision\SUMMARY.md` (BACK + FORWARD + តារាង gates + ការសម្រេច)
 និង `SUMMARY_BACK.md` (លេខ BACK ប៉ុណ្ណោះ)។ ការសម្រេច (PASS / cost round /

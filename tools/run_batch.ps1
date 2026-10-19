@@ -22,6 +22,10 @@ param(
     [string]$ToDate   = "2026.09.30",
     [string]$Deposit  = "1000",
 
+    # optional: run only these variants (names, e.g. V1_Full) - useful for
+    # a quick single-variant check before the whole overnight batch
+    [string[]]$Only = @(),
+
     # paths: <INSTALL> = folder with terminal64.exe, <DATA> = terminal data
     # folder (File -> Open Data Folder in the terminal)
     [string]$InstallDir = "C:\Program Files\MetaTrader 5",
@@ -57,6 +61,13 @@ $common   = Join-Path $DataDir   "..\Common\Files"
 
 if(!(Test-Path $terminal)) { throw "terminal64.exe not found: $terminal" }
 if(!(Test-Path $DataDir))  { throw "DATA folder not found: $DataDir" }
+
+#--- -Only: keep the requested variants only ------------------------------
+if($Only.Count -gt 0)
+  {
+   $variants = @($variants | Where-Object { $Only -contains $_.name })
+   if($variants.Count -eq 0) { throw ("unknown -Only variant(s): {0}" -f ($Only -join ", ")) }
+  }
 
 #--- <DATA>\reports\decision must exist before any tester run --------------
 New-Item -ItemType Directory -Force -Path $reports | Out-Null
@@ -179,6 +190,16 @@ Write-Host "[batch] .set files (hours generated) copied to $dataSetDir"
 if($instOk) { Write-Host "[batch] .set files copied to $instSetDir as well" }
 
 #--- run the variants -----------------------------------------------------
+#--- /config is IGNORED while a terminal is already open: the new process -
+#--- only hands the command line to the running instance and exits with 0 -
+#--- (all 8 variants "succeed" in a second and write nothing). Refuse to  -
+#--- start in that state. --------------------------------------------------
+$running = @(Get-Process -Name terminal64 -ErrorAction SilentlyContinue)
+if($running.Count -gt 0)
+  {
+   throw ("MetaTrader 5 is still running (PID {0}). Close the terminal completely (also the tray icon / background process) and run the batch again - /config does nothing while MT5 is open." -f (($running | ForEach-Object { $_.Id }) -join ", "))
+  }
+
 $index = 0
 foreach($v in $variants)
   {
@@ -210,18 +231,69 @@ foreach($v in $variants)
    #--- start the tester and wait for the exit --------------------------
    $ini = Join-Path $localDir "$n.ini"
    Write-Host "        terminal64.exe /config:$ini"
+   $t0 = Get-Date
    $p = Start-Process -FilePath $terminal -ArgumentList "/config:`"$ini`"" -PassThru
    $p.WaitForExit()
-   Write-Host ("        exit code {0}" -f $p.ExitCode)
+   $secs = [int](((Get-Date) - $t0).TotalSeconds)
+   Write-Host ("        exit code {0} after {1} s" -f $p.ExitCode, $secs)
 
-   #--- the report was written straight into reports\decision\<variant> by
-   #--- the tester; make sure it is there under a known name -------------
-   Get-ChildItem -Path $outDir -Filter "*.htm*" -ErrorAction SilentlyContinue |
-     ForEach-Object { if($_.Name -ne "report.htm") { Copy-Item $_.FullName (Join-Path $outDir "report.htm") -Force } }
-   Get-ChildItem -Path $common -Filter "TwinPulse*.csv" -ErrorAction SilentlyContinue |
-     ForEach-Object { Copy-Item $_.FullName $outDir -Force }
+   #--- the report: the tester writes it where `Report=` points (relative
+   #--- to the DATA folder). Collect whatever appeared in the last minutes
+   #--- from the variant folder and both reports roots, keep the newest as
+   #--- report.htm. ------------------------------------------------------
+   $cand = @()
+   $cand += @(Get-ChildItem -Path $outDir -Filter "*.htm*" -ErrorAction SilentlyContinue)
+   foreach($root in @((Join-Path $DataDir "reports"), (Join-Path $InstallDir "reports")))
+     {
+      if(Test-Path $root)
+        {
+         $cand += @(Get-ChildItem -Path $root -Recurse -Filter "*.htm*" -ErrorAction SilentlyContinue |
+                    Where-Object { $_.LastWriteTime -ge $t0.AddMinutes(-1) })
+        }
+     }
+   if($cand.Count -gt 0)
+     {
+      $rep = $cand | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+      if($rep.FullName -ne $reportH) { Copy-Item $rep.FullName $reportH -Force }
+     }
 
-   Write-Host "        report + CSV copied to $outDir"
+   #--- fresh CSVs from Common\Files -------------------------------------
+   $csvs = @(Get-ChildItem -Path $common -Filter "TwinPulse*.csv" -ErrorAction SilentlyContinue)
+   foreach($c in $csvs) { Copy-Item $c.FullName $outDir -Force }
+
+   #--- a variant that produced no report did NOT run: say it loudly -----
+   if(!(Test-Path $reportH))
+     {
+      Write-Host ("        ERROR: {0} produced NO report ({1})." -f $n, ("exit {0} after {1} s" -f $p.ExitCode, $secs))
+      Write-Host "        Last lines of the newest tester / terminal log:"
+      $logs = @()
+      foreach($root in @((Join-Path $DataDir "logs"), (Join-Path $DataDir "Tester")))
+        {
+         if(Test-Path $root)
+           {
+            $logs += @(Get-ChildItem -Path $root -Recurse -Filter "*.log" -ErrorAction SilentlyContinue |
+                       Where-Object { $_.LastWriteTime -ge $t0.AddMinutes(-2) })
+           }
+        }
+      if($logs.Count -gt 0)
+        {
+         $newest = $logs | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+         Write-Host ("        " + $newest.FullName)
+         Get-Content $newest.FullName -Tail 25 | ForEach-Object { Write-Host ("        | " + $_) }
+        }
+      else
+        {
+         Write-Host "        (no fresh log found: check that MetaTrader 5 was closed and that the"
+         Write-Host "         .set files exist in <DATA>\MQL5\Profiles\Tester)"
+        }
+      throw ("variant {0} produced no report - fix the cause above and run the batch again (it is resume-safe)." -f $n)
+     }
+
+   if($csvs.Count -eq 0)
+     {
+      Write-Host ("        WARNING: no TwinPulse*.csv in {0} - did the EA really run?" -f $common)
+     }
+   Write-Host ("        report + {0} CSV copied to {1}" -f $csvs.Count, $outDir)
   }
 
 Write-Host "[batch] all variants processed."

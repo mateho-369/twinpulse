@@ -7,6 +7,18 @@ The format follows `Keep a Changelog`, the project uses semantic versioning.
 
 ### Fixed
 
+* **The batch failed silently (first owner batch: every variant "exit code
+  0" in a second, no report, no CSV - `SUMMARY.md` was written from an
+  empty folder and even printed "STOP the hedge idea"):**
+  `terminal64.exe /config:` is ignored while a terminal is already open,
+  so `tools/run_batch.ps1` now refuses to start when a `terminal64`
+  process exists, prints the elapsed time of every variant, verifies that
+  a report really appeared (the variant folder and both `reports` roots
+  are searched) and stops the batch with the last lines of the tester log
+  when a variant produced nothing. New `-Only V1_Full` runs a single
+  variant. `tools/summarize_batch.py` refuses to write any verdict when
+  no variant has a report or CSV rows (**NO DATA**, exit code 3, no
+  `SUMMARY*.md` written) instead of judging an empty batch.
 * Stop modifications ("Invalid stops" flood): every trailing / break-even
   stop is now validated before it is sent. The new pure helper
   `TP_ClampStop` clamps the stop into the legal region

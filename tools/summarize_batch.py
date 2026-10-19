@@ -351,6 +351,31 @@ def main():
         data[v] = {"report": report, "legs": legs,
                    "back_rows": back_rows, "fwd_rows": fwd_rows}
 
+    # ---- refuse to judge an empty batch -----------------------------
+    # A batch whose tester never started (MT5 still open -> /config is
+    # ignored, wrong Expert name, missing history, ...) leaves no report
+    # and no CSV behind. Writing "STOP the hedge idea" from that would be
+    # a false verdict, so stop here and name the probable cause instead.
+    def _has_data(d):
+        if d["legs"].rows:
+            return True
+        try:
+            net, _ = pick_pair(d["report"], ["total net profit"])
+        except Exception:
+            net = None
+        return net is not None
+
+    if not any(_has_data(data[v]) for v in VARIANTS):
+        print("NO DATA: no variant has a report or legs.csv rows in %s" % rdir)
+        print("         the batch did NOT run - the tester produced nothing.")
+        print("         check: (1) was MetaTrader 5 completely closed when")
+        print("                    run_batch.ps1 started? /config is ignored")
+        print("                    while the terminal is open;")
+        print("                (2) does <DATA>\\MQL5\\Experts\\TwinPulse\\TwinPulse.ex5 exist?")
+        print("                (3) does the .ini Expert= name match the .ex5?")
+        print("SUMMARY.md / SUMMARY_BACK.md were NOT written - no verdict.")
+        return 3
+
     # ---- run-level spread stats (the run's own spread) --------------
     all_rows = []
     for v in VARIANTS:

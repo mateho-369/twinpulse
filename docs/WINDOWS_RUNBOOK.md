@@ -165,6 +165,48 @@ near zero, and no `Invalid stops` flood may appear in the log.
 
 ---
 
+## 5b. Decision batch (V1..V8) - `tools\run_batch.ps1`
+
+> **MetaTrader 5 must be completely closed** (tray icon too) before the
+> batch starts. `terminal64.exe /config:` is ignored while a terminal is
+> already open: the new process only forwards the command line to the
+> running instance and exits with code 0 without running anything (all 8
+> variants "succeed" in a second and write nothing). The script now
+> refuses to start when a `terminal64` process exists.
+
+1. Check the pipeline once with a single variant (~2 minutes) before the
+   overnight run:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File tools\run_batch.ps1 -Symbol XAUUSDm `
+       -FromDate 2026.08.01 -ToDate 2026.10.19 -Deposit 1000 `
+       -InstallDir "C:\Program Files\MetaTrader 5" `
+       -DataDir "<DATA>" -Only V1_Full
+   ```
+
+   A healthy run prints `report + 2 CSV copied to ...`. A variant without
+   a report stops the batch and dumps the last lines of the tester log
+   (the tester writes no report when it never started).
+
+2. Run the whole batch (resume-safe, the finished variants are skipped):
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File tools\run_batch.ps1
+   ```
+
+3. Summarize:
+
+   ```powershell
+   python tools\summarize_batch.py --data "<DATA>" --from <from> --to <to> `
+       --symbol XAUUSDm --contract-size 100 --ref-spread 0.20
+   ```
+
+   When no variant has any data, `summarize_batch.py` prints
+   **NO DATA** and writes nothing - an empty folder never produces a
+   verdict.
+
+---
+
 ## 6. Demo account (Exness)
 
 1. Open a **XAUUSDm M5** chart.
@@ -188,6 +230,8 @@ Stay on the **Demo** account until every gate is confirmed.
 | **"Market closed"** | weekend or market close | the EA retries at the next open |
 | **"too many requests"** | too many orders | do not raise `MaxOrderRetries` / `TimerSeconds`; do not run several EAs on the same account |
 | tester does not start | history / `.ini` | open XAUUSDm M5 once, download history (`View -> Symbols`), check `ExpertParameters`, never use `Visual=1` with `/config` |
+| batch: all variants `exit code 0` in a second, no report / no CSV | MetaTrader 5 was still open, `/config` was ignored | close MT5 completely; the script now refuses to start in that state (section 5b) |
+| `summarize_batch.py`: **NO DATA** | the batch produced nothing | do not read a verdict into it - fix the batch first (section 5b) |
 | many `Invalid stops` / `SL modify ... failed` lines | this must not happen after the stop fixes | send the log back: it proves an unfixed execution bug |
 
 ---
