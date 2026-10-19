@@ -95,6 +95,7 @@ bool TP_Bank_FindOldestLoser(int &legIndex)
 //+------------------------------------------------------------------+
 bool TP_Bank_TryShred(void)
   {
+   if(!UseBankShred) return false;   // test switch: let every leg resolve on its own TP / SL
    if(!TP_UseBank()) return false;
    if(g_tp.bank <= 0.0) return false;
 

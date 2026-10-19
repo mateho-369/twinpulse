@@ -26,6 +26,10 @@ param(
     # a quick single-variant check before the whole overnight batch
     [string[]]$Only = @(),
 
+    # optional: folder of .set presets to use instead of tester\decision
+    # (e.g. -Preset "tester\upgrade"); one variant per <name>.set file
+    [string]$Preset = "",
+
     # paths: <INSTALL> = folder with terminal64.exe, <DATA> = terminal data
     # folder (File -> Open Data Folder in the terminal)
     [string]$InstallDir = "C:\Program Files\MetaTrader 5",
@@ -61,6 +65,26 @@ $common   = Join-Path $DataDir   "..\Common\Files"
 
 if(!(Test-Path $terminal)) { throw "terminal64.exe not found: $terminal" }
 if(!(Test-Path $DataDir))  { throw "DATA folder not found: $DataDir" }
+
+#--- -Preset: discover the variants from a folder of .set files -----------
+if($Preset -ne "")
+  {
+   $presetDir = Join-Path $RepoRoot $Preset
+   if(!(Test-Path $presetDir)) { throw "preset folder not found: $presetDir" }
+   $variants = @(Get-ChildItem -Path $presetDir -Filter "*.set" | Sort-Object Name |
+                 ForEach-Object {
+                    $desc = (Get-Content $_.FullName -TotalCount 3 |
+                             Where-Object { $_ -match "^;\s{2,}\S" } |
+                             Select-Object -First 1)
+                    if($desc) { $desc = $desc -replace "^;\s+", "" } else { $desc = "preset" }
+                    @{ name = $_.BaseName; desc = $desc }
+                 })
+   if($variants.Count -eq 0) { throw ("no .set files in {0}" -f $presetDir) }
+   $iniDir = $presetDir
+   #never overwrite the decision batch: own reports folder per preset
+   $reports = Join-Path $DataDir ("reports\" + (Split-Path $Preset -Leaf))
+   Write-Host ("[batch] preset {0}: {1} variant(s) -> {2}" -f $Preset, $variants.Count, $reports)
+  }
 
 #--- -Only: keep the requested variants only ------------------------------
 if($Only.Count -gt 0)

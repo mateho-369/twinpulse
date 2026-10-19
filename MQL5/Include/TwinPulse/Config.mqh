@@ -117,6 +117,7 @@ input double HardSL_ATR        = 2.5;             // Hard stop for every leg in 
 input double CostFloorSpreadMult = 3.0;            // Every target is at least N x current spread (1..10)
 input double CycleTargetUSD    = 2.0;             // Basket target in USD per 0.01 lot (1..4)
 input double MinBankUSD        = 0.30;            // Minimum combined pair P/L for Close By, USD per 0.01 lot (0.1..2)
+input bool   UseBankShred      = true;             // Spend the bank to shred a losing leg (off = let every leg resolve on its own TP/SL)
 input double RebalanceTolUSD   = 0.10;            // Re-balance tolerance, USD per 0.01 lot (0.05..0.5)
 input double ShredStepLot      = 0.01;            // Lot step used when shredding a loser (0.01..0.05)
 input int    MaxLoserMinutes   = 240;             // Time stop for a losing leg, minutes (30..1440)

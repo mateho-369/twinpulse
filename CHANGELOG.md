@@ -7,6 +7,21 @@ The format follows `Keep a Changelog`, the project uses semantic versioning.
 
 ### Added
 
+* Round-2 upgrade (`docs/UPGRADE_PLAN.md`): the first batch measured the
+  structural loss - the bank shred closed 924 losing legs for -1,892.50 while
+  the 497 legs that reached target made +1,886.37, i.e. the recycle exactly
+  cancels the wins and pays spread on every turn. New input
+  `UseBankShred` (**default true = unchanged behaviour**) turns the recycle
+  off so a leg resolves on its own TP / SL; `tools/run_batch.ps1 -Preset
+  <folder>` runs any folder of `.set` files with the same two-pass harness
+  (reports go to `<DATA>\reports\<folder>`, never over the decision batch);
+  `tester/upgrade/W1..W6.set` isolate one lever each (no shred, longer time
+  stop, larger targets, spread filter, one side) plus `W6_RandomCtl` - a
+  RANDOM entry control with the same exits. Risk per trade is unchanged
+  (BaseLot 0.01, HardSL_ATR 2.5, AllowLive=false). Round-2 gates are the
+  frozen ones from `DECISION_RULES.md`; the forward half still needs real
+  ticks (the broker has them only from 2026.10.02).
+
 * `docs/ANALYSIS_1.md` - the first decision batch (XAUUSDm, 2026.08.01 ..
   2026.10.19, 8 variants, 16 runs). Result: the batch is NOT VALID FOR GATES
   because the broker has real ticks only from 2026.10.02 (History Quality

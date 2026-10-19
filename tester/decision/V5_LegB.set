@@ -39,6 +39,7 @@ HardSL_ATR=2.5
 CostFloorSpreadMult=3.0
 CycleTargetUSD=2.0
 MinBankUSD=0.30
+UseBankShred=true
 RebalanceTolUSD=0.10
 ShredStepLot=0.01
 MaxLoserMinutes=240
