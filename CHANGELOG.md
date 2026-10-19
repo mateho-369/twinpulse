@@ -5,6 +5,16 @@ The format follows `Keep a Changelog`, the project uses semantic versioning.
 
 ## [Unreleased]
 
+### Added
+
+* `docs/ANALYSIS_1.md` - the first decision batch (XAUUSDm, 2026.08.01 ..
+  2026.10.19, 8 variants, 16 runs). Result: the batch is NOT VALID FOR GATES
+  because the broker has real ticks only from 2026.10.02 (History Quality
+  0% / 62%); the accounting (`pos_net` == report net) matches to the cent in
+  all 16 runs; the gross-before-spread PF is 0.95..1.07 (the best one is a
+  RANDOM control), so decision rule 2 does not trigger and rule 3 applies:
+  **stop the hedge idea**.
+
 ### Fixed
 
 * **The forward half was never measured:** a tester run with `ForwardMode=2`
