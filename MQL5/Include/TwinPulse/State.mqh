@@ -32,6 +32,9 @@ struct TpLegState
    int                modifyFails;  // consecutive failed stop modifications
    datetime           modifyBackoff; // no stop modification before this time
    string             lastReason;   // log de-dup: last block reason of this leg
+   double             spreadOpen;   // spread at the open, price units
+   double             spreadCost;   // spread x volume x contract size at the open
+   bool               booked;       // already written to legs.csv for this session
   };
 
 //--- global EA state --------------------------------------------------
@@ -83,6 +86,8 @@ struct TpStats
    int       closeFailures;   // failed close requests
    int       closeByCount;    // executed Close By nettings
    int       stopThrough;     // legs closed with the exit reason STOP_THROUGH
+   double    grossBeforeSpread; // sum of the gross P/L of all closed legs
+   double    spreadPaid;      // sum of the spread cost of all closed legs
   };
 
 //--- the single global state object ----------------------------------
@@ -134,6 +139,8 @@ void TP_State_Init(void)
    g_stats.closeFailures  = 0;
    g_stats.closeByCount   = 0;
    g_stats.stopThrough    = 0;
+   g_stats.grossBeforeSpread = 0.0;
+   g_stats.spreadPaid     = 0.0;
 
    for(int i = 0; i < TP_LEG_COUNT; i++)
      {
@@ -156,6 +163,10 @@ void TP_State_Init(void)
       g_tp.legs[i].lastModify = 0;
       g_tp.legs[i].modifyFails = 0;
       g_tp.legs[i].modifyBackoff = 0;
+      g_tp.legs[i].lastReason = "";
+      g_tp.legs[i].spreadOpen = 0.0;
+      g_tp.legs[i].spreadCost = 0.0;
+      g_tp.legs[i].booked     = false;
      }
   }
 
@@ -265,7 +276,11 @@ void TP_State_SyncPositions(void)
 
       g_tp.legs[legIdx].open       = true;
       g_tp.legs[legIdx].ticket     = ticket;
-      g_tp.legs[legIdx].positionId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+      //--- a NEW position session may be booked to the legs.csv again -
+      ulong newId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+      if(g_tp.legs[legIdx].positionId != newId)
+         g_tp.legs[legIdx].booked = false;
+      g_tp.legs[legIdx].positionId = newId;
       g_tp.legs[legIdx].type       = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
       g_tp.legs[legIdx].volume     = PositionGetDouble(POSITION_VOLUME);
       g_tp.legs[legIdx].openPrice  = PositionGetDouble(POSITION_PRICE_OPEN);

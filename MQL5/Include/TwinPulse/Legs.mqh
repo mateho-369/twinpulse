@@ -28,6 +28,9 @@ bool   TP_Legs_RebalanceCondition(const bool sideMissing, const double survivorP
 //--- tick while the opens are blocked, it is logged once per state ---
 string g_cycleStartBlock = "";
 
+//--- RANDOM entry control: one probability roll per new M5 bar -------
+datetime g_lastEntryRoll = 0;
+
 //+------------------------------------------------------------------+
 //| TP_Legs_CostFloorOf - pure cost floor calculation                  |
 //+------------------------------------------------------------------+
@@ -298,6 +301,10 @@ bool TP_Legs_OpenOne(const int legIndex, const bool isReopen)
 //+------------------------------------------------------------------+
 void TP_Legs_RegisterClose(const int legIndex, const string reason, const double closePrice)
   {
+   //--- exactly one legs.csv row per open session of a leg ----------
+   if(g_tp.legs[legIndex].booked) return;
+   g_tp.legs[legIndex].booked = true;
+
    ulong posId = g_tp.legs[legIndex].positionId;
    double price = closePrice;
    double cumulative = TP_State_RealizedForPosition(posId, g_tp.legs[legIndex].openTime, price);
@@ -305,14 +312,22 @@ void TP_Legs_RegisterClose(const int legIndex, const string reason, const double
    g_tp.legs[legIndex].realized = cumulative;
    TP_Bank_Add(delta);
 
+   //--- spread accounting for the decision analysis -----------------
+   double spreadCost = g_tp.legs[legIndex].spreadCost;
+   double gross      = TP_GrossBeforeSpread(delta, spreadCost);
+   g_stats.grossBeforeSpread += gross;
+   g_stats.spreadPaid        += spreadCost;
+
    g_tp.closedLegs++;
    g_tp.legs[legIndex].wasOpen = false;
+   g_tp.legs[legIndex].open    = false;   // closed: never touched again by the close paths
    g_tp.legs[legIndex].lastReason = "";   // the state changed, a block may log again
 
    TP_LogLegCSV(legIndex, g_tp.cycleId, g_tp.legs[legIndex].volume,
                 g_tp.legs[legIndex].openPrice, price, delta, reason,
                 g_tp.bank, TP_RegimeName(g_tp.regime),
-                TP_Exec_CurrentSpreadPrice(), g_tp.atr5);
+                TP_Exec_CurrentSpreadPrice(), g_tp.atr5,
+                g_tp.legs[legIndex].spreadOpen, spreadCost, gross);
   }
 
 //+------------------------------------------------------------------+
@@ -345,7 +360,7 @@ void TP_Legs_CloseWinner(const int legIndex)
    int mirror = TP_LegMirror(legIndex);
    ulong ticket = g_tp.legs[legIndex].ticket;
 
-   if(g_tp.legs[mirror].open)
+   if(g_tp.legs[mirror].open && TP_CloseByTicketsOk(ticket, g_tp.legs[mirror].ticket))
      {
       double v1 = g_tp.legs[legIndex].volume;
       double v2 = g_tp.legs[mirror].volume;
@@ -561,30 +576,46 @@ void TP_Legs_TryStartCycle(void)
    bool onlyBuy = false;
    bool onlySell = false;
 
-   if(TP_UseRegime())
+   if(EntryMode == TP_ENTRY_RANDOM)
      {
-      if(regime == TP_REG_CHAOS) return;
-      if(TP_IsOneSide())
-        {
-         if(regime != TP_REG_TREND_UP && regime != TP_REG_TREND_DOWN) return;
-         onlyBuy  = (regime == TP_REG_TREND_UP);
-         onlySell = (regime == TP_REG_TREND_DOWN);
-        }
-      else if(!TP_IsPureIdea())
-        {
-         if(regime != TP_REG_RANGE) return;
-        }
+      //--- RANDOM control: the entry trigger and the regime filter are
+      //--- ignored for STARTING a cycle - on every new M5 bar the
+      //--- cycle starts with probability RandomStartProb. Exits,
+      //--- brakes, session / rollover filters and the lot size are
+      //--- identical to the normal mode. -----------------------------
+      datetime bar = iTime(g_symbol, PERIOD_M5, 0);
+      if(bar == 0 || bar == g_lastEntryRoll) return;   // one roll per M5 bar
+      g_lastEntryRoll = bar;
+      double roll = (double)MathRand() / 32767.0;
+      if(roll >= RandomStartProb) return;
      }
-
-   //--- the price must be close to the Bollinger middle line ---------
-   double mid = g_tp.regimeBbMid;
-   if(mid > 0.0)
+   else
      {
-      MqlTick tick;
-      if(!SymbolInfoTick(g_symbol, tick)) return;
-      double price = (tick.ask + tick.bid) * 0.5;
-      double maxDist = BBRangeATR * g_tp.atrM15;
-      if(MathAbs(price - mid) > maxDist) return;
+      if(TP_UseRegime())
+        {
+         if(regime == TP_REG_CHAOS) return;
+         if(TP_IsOneSide())
+           {
+            if(regime != TP_REG_TREND_UP && regime != TP_REG_TREND_DOWN) return;
+            onlyBuy  = (regime == TP_REG_TREND_UP);
+            onlySell = (regime == TP_REG_TREND_DOWN);
+           }
+         else if(!TP_IsPureIdea())
+           {
+            if(regime != TP_REG_RANGE) return;
+           }
+        }
+
+      //--- the price must be close to the Bollinger middle line ------
+      double mid = g_tp.regimeBbMid;
+      if(mid > 0.0)
+        {
+         MqlTick tick;
+         if(!SymbolInfoTick(g_symbol, tick)) return;
+         double price = (tick.ask + tick.bid) * 0.5;
+         double maxDist = BBRangeATR * g_tp.atrM15;
+         if(MathAbs(price - mid) > maxDist) return;
+        }
      }
 
    //--- start the cycle ------------------------------------------------
@@ -614,6 +645,7 @@ void TP_Legs_TryStartCycle(void)
    int opened = 0;
    for(int i = 0; i < TP_LEG_COUNT; i++)
      {
+      if(!TP_LegSetAllows(i, LegSet)) continue;
       if(onlyBuy  && !TP_LegIsBuy(i))  continue;
       if(onlySell && TP_LegIsBuy(i))   continue;
       if(TP_Legs_OpenOne(i, false)) opened++;
@@ -654,6 +686,7 @@ void TP_Legs_TryRebalance(void)
      {
       if(g_tp.legs[i].open) continue;
       if(!g_tp.legs[i].used) continue;         // never opened in this cycle
+      if(!TP_LegSetAllows(i, LegSet)) continue;
 
       string reason = "";
       if(!TP_Legs_ReopenAllowed(i, reason))
@@ -700,11 +733,15 @@ void TP_Legs_CloseCycle(const string reason)
       int sellLeg = (slot == 0) ? TP_LEG_SELL_A : TP_LEG_SELL_B;
       if(!g_tp.legs[buyLeg].open || !g_tp.legs[sellLeg].open) continue;
       if(MathAbs(g_tp.legs[buyLeg].volume - g_tp.legs[sellLeg].volume) > 1e-8) continue;
+      //--- never send a Close By with a zero / identical ticket ------
+      if(!TP_CloseByTicketsOk(g_tp.legs[buyLeg].ticket, g_tp.legs[sellLeg].ticket)) continue;
 
       if(TP_Exec_CloseBy(g_tp.legs[buyLeg].ticket, g_tp.legs[sellLeg].ticket) == TP_CLOSE_OK)
         {
-         TP_Legs_RegisterClose(buyLeg,  "cycle_closeby", 0.0);
-         TP_Legs_RegisterClose(sellLeg, "cycle_closeby", 0.0);
+         //--- every leg gets its REAL exit reason (e.g. "rollover
+         //--- flatten"), not a generic "cycle_closeby" ---------------
+         TP_Legs_RegisterClose(buyLeg,  reason, 0.0);
+         TP_Legs_RegisterClose(sellLeg, reason, 0.0);
         }
      }
 
@@ -713,7 +750,7 @@ void TP_Legs_CloseCycle(const string reason)
      {
       if(!g_tp.legs[i].open) continue;
       if(TP_Exec_CloseLeg(g_tp.legs[i].ticket) == TP_CLOSE_OK)
-         TP_Legs_RegisterClose(i, "cycle_close", 0.0);
+         TP_Legs_RegisterClose(i, reason, 0.0);
      }
 
    //--- book the legs that were already gone before the close ---------

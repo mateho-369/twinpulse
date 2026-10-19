@@ -66,6 +66,11 @@ int OnInit()
    if(g_legsPerSide < 1) g_legsPerSide = 1;
    if(g_legsPerSide > 2) g_legsPerSide = 2;
 
+   //--- deterministic RANDOM entry (EntryMode = 1) --------------------
+   int seed = RandomSeed;
+   if(seed < 1) seed = 1;
+   MathSrand(seed);
+
    //--- trade objects -------------------------------------------------
    g_trade.SetExpertMagicNumber((ulong)g_magic);
    g_trade.SetDeviationInPoints(DeviationPoints);
@@ -178,12 +183,16 @@ void OnDeinit(const int reason)
 
    //--- execution counters: the smoke test proof for the stop / close -
    //--- fixes. Print() so the lines land in the tester journal.       --
+   //--- "log lines written" counts TwinPulse.log lines exactly (the   --
+   //--- file can hold less after a 2 MB rotation), "csv rows" the     --
+   //--- legs / cycles CSV rows.                                       --
    string execSummary = StringFormat(
-      "exec summary: modify attempts %d, modify failures %d, closes %d, close failures %d, Close By %d, STOP_THROUGH %d, log lines written %d, duplicates suppressed %d",
+      "exec summary: modify attempts %d, modify failures %d, closes %d, close failures %d, Close By %d, STOP_THROUGH %d, log lines written %d, csv rows written %d, duplicates suppressed %d, gross before spread %.2f, spread paid %.2f",
       g_stats.modifyAttempts, g_stats.modifyFailures,
       g_stats.closeAttempts, g_stats.closeFailures,
       g_stats.closeByCount, g_stats.stopThrough,
-      (int)g_logLinesWritten, (int)g_logDupSuppressed);
+      (int)g_logLinesWritten, (int)g_csvRowsWritten, (int)g_logDupSuppressed,
+      g_stats.grossBeforeSpread, g_stats.spreadPaid);
    Print("TwinPulse | ", execSummary);
    TP_LogInfo(execSummary);
 

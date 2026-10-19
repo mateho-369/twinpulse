@@ -55,6 +55,15 @@ enum ENUM_TP_MODE
    TP_ONE_SIDE   = 2    // ONE_SIDE : with-H1-trend side only, no hedge
   };
 
+//--- entry modes (input EntryMode) -----------------------------------
+#define TP_ENTRY_NORMAL  0        // the normal trigger (regime + BB)
+#define TP_ENTRY_RANDOM  1        // RANDOM control: start on a new M5 bar
+
+//--- leg sets (input LegSet) -----------------------------------------
+#define TP_LEGSET_AB     0        // both slots A and B
+#define TP_LEGSET_A      1        // only the slot A legs
+#define TP_LEGSET_B      2        // only the slot B legs
+
 //--- position sizing mode --------------------------------------------
 enum ENUM_TP_RISKMODE
   {
@@ -70,6 +79,9 @@ input group "=== TwinPulse - general ==="
 
 input long   Magic              = TP_MAGIC_DEFAULT; // EA magic number (1..999999999)
 input ENUM_TP_MODE Mode          = TP_FULL;         // Mode: FULL / PURE_IDEA / ONE_SIDE
+input int    EntryMode          = 0;               // Entry: 0 = normal trigger, 1 = RANDOM (control)
+input double RandomStartProb    = 0.02;            // RANDOM: start probability per M5 bar (0..1)
+input int    RandomSeed         = 1;               // RANDOM: MathSrand seed (>= 1)
 input bool   AllowLive          = false;           // Allow trading on a REAL account
 input bool   ShowPanel          = true;            // Show the on-chart panel
 input bool   EnableFileLog      = true;            // Write TwinPulse.log in Common\Files
@@ -84,6 +96,7 @@ input int    MaxOrderRetries    = 3;               // Retries for requote / pric
 input group "=== TwinPulse - legs and sizing ==="
 
 input int    LegsPerSide        = 2;               // Legs per side (1..2, MaxLegs=4)
+input int    LegSet             = 0;               // Legs: 0 = A+B, 1 = only A, 2 = only B
 input double BaseLot            = 0.01;            // Lot per leg (0.01..1.00)
 input double LotMultiplier      = 1.0;             // Re-open lot escalation (1.0..1.5, >1 needs the risk flag)
 input bool   IUnderstandMartingaleRisk = false;     // I understand >1.0 multiplier is martingale-like

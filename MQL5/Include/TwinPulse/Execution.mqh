@@ -298,6 +298,13 @@ bool TP_Exec_OpenLeg(const int legIndex, const double volume, const double sl, c
                            what, isBuy ? "BUY" : "SELL", volume,
                            TP_Str(price, g_digits), result.deal));
    g_lastOpenBlock = "";   // a real open, a later block logs again
+
+   //--- spread accounting for the decision analysis -----------------
+   double spreadNow = tick.ask - tick.bid;
+   double contract  = SymbolInfoDouble(g_symbol, SYMBOL_TRADE_CONTRACT_SIZE);
+   g_tp.legs[legIndex].spreadOpen = spreadNow;
+   g_tp.legs[legIndex].spreadCost = TP_SpreadCost(spreadNow, volume, contract);
+   g_tp.legs[legIndex].booked     = false;
    return true;
   }
 
@@ -371,7 +378,10 @@ ENUM_TP_CLOSE_RESULT TP_Exec_CloseLeg(const ulong ticket)
 //+------------------------------------------------------------------+
 ENUM_TP_CLOSE_RESULT TP_Exec_CloseBy(const ulong ticket1, const ulong ticket2)
   {
-   if(ticket1 == 0 || ticket2 == 0 || ticket1 == ticket2) return TP_CLOSE_NOPAIR;
+   //--- a Close By with a zero or identical ticket is invalid: never
+   //--- sent (the terminal prints "failed close position #0 ..." and
+   //--- the server answers "Invalid request")
+   if(!TP_CloseByTicketsOk(ticket1, ticket2)) return TP_CLOSE_NOPAIR;
 
    //--- both tickets must exist ---------------------------------------
    bool   alive1 = PositionSelectByTicket(ticket1);

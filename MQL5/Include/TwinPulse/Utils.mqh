@@ -113,7 +113,14 @@ long TP_StopMinPoints(const long stopsLevelPts, const long freezeLevelPts)
 //+------------------------------------------------------------------+
 //| Log de-duplication (pure) + log counters for the OnDeinit summary  |
 //+------------------------------------------------------------------+
-long g_logLinesWritten  = 0;   // every line written to a log / CSV file
+//--- g_logLinesWritten counts EXACTLY the lines written to            |
+//--- TwinPulse.log (TP_LogFileWrite), g_csvRowsWritten the rows       |
+//--- written to the legs / cycles CSVs (TP_CsvAppend). The log FILE  |
+//--- can contain FEWER lines than were written: the 2 MB rotation     |
+//--- deletes the old content and starts over. The OnDeinit summary    |
+//--- reports both counters.                                          |
+long g_logLinesWritten  = 0;
+long g_csvRowsWritten   = 0;
 long g_logDupSuppressed = 0;   // duplicate messages that were skipped
 
 //+------------------------------------------------------------------+
@@ -409,6 +416,36 @@ bool TP_LegIsBuy(const int legIndex)
   }
 
 //+------------------------------------------------------------------+
+//| TP_CloseByTicketsOk - a Close By needs two different, non-zero    |
+//| tickets. A request with a zero ticket is invalid and must never   |
+//| be sent (pure).                                                   |
+//+------------------------------------------------------------------+
+bool TP_CloseByTicketsOk(const ulong ticket1, const ulong ticket2)
+  {
+   if(ticket1 == 0 || ticket2 == 0) return false;
+   if(ticket1 == ticket2) return false;
+   return true;
+  }
+
+//+------------------------------------------------------------------+
+//| TP_SpreadCost - the spread a position paid at the open, in money  |
+//| spread (price) x volume x contract size (pure)                    |
+//+------------------------------------------------------------------+
+double TP_SpreadCost(const double spread, const double volume, const double contractSize)
+  {
+   return spread * volume * contractSize;
+  }
+
+//+------------------------------------------------------------------+
+//| TP_GrossBeforeSpread - the P/L of a closed leg before the spread  |
+//| was paid: net + spread cost (pure)                                |
+//+------------------------------------------------------------------+
+double TP_GrossBeforeSpread(const double netPnl, const double spreadCost)
+  {
+   return netPnl + spreadCost;
+  }
+
+//+------------------------------------------------------------------+
 //| TP_LegMirror - the opposite leg of the same slot                   |
 //+------------------------------------------------------------------+
 int TP_LegMirror(const int legIndex)
@@ -429,6 +466,17 @@ int TP_LegMirror(const int legIndex)
 int TP_LegSlot(const int legIndex)
   {
    return (legIndex % TP_SLOT_COUNT);
+  }
+
+//+------------------------------------------------------------------+
+//| TP_LegSetAllows - is the leg part of the configured leg set?      |
+//| LegSet: 0 = A+B, 1 = only slot A, 2 = only slot B (pure)          |
+//+------------------------------------------------------------------+
+bool TP_LegSetAllows(const int legIndex, const int legSet)
+  {
+   if(legSet == 1) return (TP_LegSlot(legIndex) == 0);
+   if(legSet == 2) return (TP_LegSlot(legIndex) == 1);
+   return true;
   }
 
 //+------------------------------------------------------------------+

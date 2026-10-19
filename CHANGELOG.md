@@ -95,6 +95,29 @@ The format follows `Keep a Changelog`, the project uses semantic versioning.
   with the ',' delimiter. The news export flushes every chunk and prints
   the progress per year, so the run can be followed on screen.
 
+### Fixed
+
+* Every closed leg now appears in `TwinPulse_legs.csv` **exactly once**
+  with its real exit reason: `RegisterClose` books a leg only once per
+  position (a `booked` flag per leg, cleared when a new position appears),
+  the `reason` is taken from the real exit (`cycle_close`, `cycle_closeby`,
+  `server_close`, `STOP_THROUGH`, `rollover_flatten`, ...) instead of the
+  hardcoded "cycle_close", and a full "Bank Shred" books its own row with
+  the reason `shred` (before, those legs were closed but never written to
+  the CSV).
+* A Close By request is never sent with ticket 0 again: every call checks
+  both tickets with the pure `TP_CloseByTicketsOk` (a vanished leg keeps
+  its stale ticket and the request went to the server as
+  `#0 ... by position #...` -> "Invalid request"). SelfTest covers it.
+* `TwinPulse.log`, `TwinPulse_legs.csv` and `TwinPulse_cycles.csv` now get
+  a header line when the file is empty (the open call creates a missing
+  file, so "the file was created" never told the truth and no header was
+  ever written).
+* The `exec summary` counters count exactly what is written:
+  `log lines written` = `TwinPulse.log` lines, a new `csv rows written` =
+  legs / cycles CSV rows (the old one number counted both, and the log
+  FILE can hold fewer lines after the 2 MB rotation - a comment says so).
+
 ### Added
 
 * `OnDeinit` prints an `exec summary` with the counters for the smoke test:
@@ -117,6 +140,26 @@ The format follows `Keep a Changelog`, the project uses semantic versioning.
   every tester run: run `TwinPulseNewsExport` once on a live chart first
   (missing file prints "TwinPulse_news.csv not found in Common\Files -
   news filter OFF"), and create `<DATA>\reports` before any tester `.ini`.
+* Decision batch (the go / no-go experiment): new inputs `EntryMode`
+  (0 = normal, 1 = RANDOM control - starts cycles on one `MathRand` roll
+  per new M5 bar with `RandomStartProb`, skipping the entry trigger and
+  the regime filter for STARTING only; exits / brakes / session / lot
+  management unchanged), `RandomStartProb` (0.02), `RandomSeed` (1) and
+  `LegSet` (0 = A+B, 1 = only the A scalp legs, 2 = only the B runners).
+  All defaults keep the current behaviour.
+* Spread accounting per closed leg: `TwinPulse_legs.csv` has the new
+  columns `spread_open`, `spread_cost` (spread x volume x contract size at
+  open) and `gross` (net + spread cost), and the `exec summary` prints the
+  totals `gross before spread` / `spread paid`.
+* `tester/decision/` with the 8 fixed variants V1..V8 (FULL, rollover
+  flatten, PURE, ONE_SIDE, LegSet B / A, RANDOM seed 1 / 2 - no
+  optimisation), `tools/run_batch.ps1` (symbol / dates / deposit are
+  parameters, resume-safe overnight runner), `tools/summarize_batch.py`
+  (SUMMARY.md with History Quality, BACK + FORWARD net / PF / equity DD /
+  recovery factor, legs, gross PF, spread paid, per year / month / exit
+  reason / leg, the gate table and the verdict) and the frozen decision
+  contract `docs/DECISION_RULES.md`. The Khmer runbook explains the
+  overnight run.
 
 ## [1.00] - 2026-10-17
 

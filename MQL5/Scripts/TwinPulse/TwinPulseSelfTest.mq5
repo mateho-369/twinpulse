@@ -544,6 +544,37 @@ void Test_Dedup(void)
   }
 
 //+------------------------------------------------------------------+
+//| Test 13 - Close By ticket guard, leg set filter, spread math      |
+//+------------------------------------------------------------------+
+void Test_DecisionHelpers(void)
+  {
+   Print("--- close-by guard, leg set, spread math ---");
+
+   //--- a Close By with ticket 0 must never be sent -----------------
+   TP_Check("a Close By with two tickets is allowed", TP_CloseByTicketsOk(105, 110));
+   TP_Check("ticket 0 as the first ticket is refused", !TP_CloseByTicketsOk(0, 110));
+   TP_Check("ticket 0 as the second ticket is refused", !TP_CloseByTicketsOk(110, 0));
+   TP_Check("two zero tickets are refused", !TP_CloseByTicketsOk(0, 0));
+   TP_Check("the same ticket twice is refused", !TP_CloseByTicketsOk(110, 110));
+
+   //--- LegSet filter ------------------------------------------------
+   TP_Check("LegSet 0 allows every leg", TP_LegSetAllows(TP_LEG_BUY_A, 0) && TP_LegSetAllows(TP_LEG_BUY_B, 0));
+   TP_Check("LegSet 1 keeps only the slot A legs", TP_LegSetAllows(TP_LEG_BUY_A, 1) && TP_LegSetAllows(TP_LEG_SELL_A, 1));
+   TP_Check("LegSet 1 drops the slot B legs", !TP_LegSetAllows(TP_LEG_BUY_B, 1) && !TP_LegSetAllows(TP_LEG_SELL_B, 1));
+   TP_Check("LegSet 2 keeps only the slot B legs", TP_LegSetAllows(TP_LEG_BUY_B, 2) && TP_LegSetAllows(TP_LEG_SELL_B, 2));
+   TP_Check("LegSet 2 drops the slot A legs", !TP_LegSetAllows(TP_LEG_BUY_A, 2) && !TP_LegSetAllows(TP_LEG_SELL_A, 2));
+
+   //--- spread accounting --------------------------------------------
+   TP_CheckEq("spread cost = spread x volume x contract size",
+              TP_SpreadCost(0.30, 0.02, 100.0), 0.60, 1e-8);
+   TP_CheckEq("zero spread costs nothing", TP_SpreadCost(0.0, 0.02, 100.0), 0.0, 1e-8);
+   TP_CheckEq("gross before spread = net + spread cost",
+              TP_GrossBeforeSpread(-2.17, 0.60), -1.57, 1e-8);
+   TP_CheckEq("gross minus spread cost is the net again",
+              TP_GrossBeforeSpread(-2.17, 0.60) - 0.60, -2.17, 1e-8);
+  }
+
+//+------------------------------------------------------------------+
 //| OnStart - run every test                                          |
 //+------------------------------------------------------------------+
 void OnStart()
@@ -567,6 +598,7 @@ void OnStart()
    Test_StopClamp();
    Test_FileRoundTrip();
    Test_Dedup();
+   Test_DecisionHelpers();
 
    Print("=====================================================");
    Print(StringFormat("  self test finished: %d passed, %d failed", g_passed, g_failed));

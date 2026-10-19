@@ -202,3 +202,49 @@ copy "<REPO>\dist\TwinPulse_single.mq5" "<DATA>\MQL5\Experts\"
 | `<DATA>\MQL5\Files\TwinPulse_cycles.csv` | ប្រវេតិកម្មវគ្គ |
 | `Common\Files\TwinPulse_news.csv` | ព័ត៌មា (បង្កើតដោយ script) |
 | `<terminal data>\reports\*.htm` | របៀបសាកល្បង |
+
+---
+
+## រត់ decision batch ពេលយប់ (tools\run_batch.ps1)
+
+ការសម្រេចចិត្ត (hedge idea បន្ត ឬបញ្ឈប់) ត្រូវការ batch ទិន្នន័យ ៨ ប្រភេទ
+(V1..V8) លើប្រវែងពេញ ៤ ឆ្នាំកន្លះ។ វាយូរ - រត់វាពេលយប់។
+
+### ១. មុនពេលរត់
+
+1. Compile ចុងក្រោយ (TwinPulse.mq5 + TwinPulseSelfTest.mq5) ហើយរត់ SelfTest
+   ឲ្យបាន PASS ទាំងអស់។
+2. ត្រូវការប្រវត្តិតម្លៃពិត (real ticks) សម្រាប់និមិត្តសញ្ញាដែលនឹងសាកល្បង។
+   បើ History Quality តិចជាង ៩០% - លទ្ធផលនឹងត្រូវសម្គាល់ថា
+   **NOT VALID FOR GATES** ហើយមិនអាចសម្រេចអ្វីបានទេ។
+3. កែប៉ារ៉ាម៉ែត្រនៅដើម `tools\run_batch.ps1` (ឬហៅជាមួយ -Symbol ។ល។):
+   `-Symbol` (ដូចជា XAUUSDm), `-FromDate` (2022.01.01), `-ToDate` (2026.09.30),
+   `-Deposit` (1000) រួមទាំង `-InstallDir` (ថត terminal64.exe) និង
+   `-DataDir` (ថត data របស់ terminal)។
+4. រៀបចំ `Common\Files\TwinPulse_news.csv` បើប្រើតម្រងព័ត៌មាន (NewsFilter)។
+
+### ២. រត់ម្តងទៅគេង (PowerShell)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\run_batch.ps1
+```
+
+Script នឹងបង្កើតឯកសារ `.ini` ទាំង ៨ ពីប៉ារ៉ាម៉ែត្រខាងលើ ចម្លងឯកសារ `.set`
+ទៅ `<DATA>\MQL5\Profiles\Tester\` និង `<INSTALL>\Profiles\Tester\` ហើយរត់
+terminal64.exe ម្តងមួយៗ (រង់ចាំមួយបញ្ចប់ទើបមួយទៀត)។ រាល់ variant:
+ផ្លាស់ទី `TwinPulse*.csv` ចាស់ពី `Common\Files` ទៅ `reports\decision\_archive\`
+សិន រួចចម្លងរបាយការណ៍ + CSV ថ្មីទៅ `reports\decision\<variant>\`។
+
+**អាចបន្តវិញបាន (resume-safe):** បើរត់ជាប់គាំង ឬគ្រឿងថាមពលដាច់ ចាប់ផ្តើម
+script ដដែល - variant ដែលមានរបាយការណ៍រួចហើយនឹងត្រូវរំលង។
+
+### ៣. ពេលព្រឹក - បូកសរុប
+
+```powershell
+python tools\summarize_batch.py --data "<DataDir>" --from 2022.01.01 --to 2026.09.30
+```
+
+អាន `reports\decision\SUMMARY.md` (BACK + FORWARD + តារាង gates + ការសម្រេច)
+និង `SUMMARY_BACK.md` (លេខ BACK ប៉ុណ្ណោះ)។ ការសម្រេច (PASS / cost round /
+បញ្ឈប់) ត្រូវគោរពតាម `docs\DECISION_RULES.md` - ក្បួននោះត្រូវបានកំណត់
+**មុនពេលមានលទ្ធផល** ហើយមិនត្រូវកែក្រោយឃើញលទ្ធផលឡើយ។

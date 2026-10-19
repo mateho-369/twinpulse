@@ -17,6 +17,10 @@
 #include "State.mqh"
 #include "Execution.mqh"
 
+//--- forward declaration, implemented in Legs.mqh (which includes this
+//--- file): a full shred books the closed leg exactly once -----------
+void TP_Legs_RegisterClose(const int legIndex, const string reason, const double closePrice);
+
 //+------------------------------------------------------------------+
 //| TP_Bank_ShredCost - bank needed to shred one step                 |
 //|  (the loss of the step plus the cost of the spread)                |
@@ -143,10 +147,16 @@ bool TP_Bank_TryShred(void)
    TP_Bank_Add(realised);
    g_tp.legs[leg].realized += realised;
    g_tp.cycleShredded += MathMax(0.0, -realised);
+   g_tp.legs[leg].lastReason = "";   // the state changed, a later block logs again
+
+   //--- a full shred closes the leg: exactly one legs.csv row with the
+   //--- real exit reason "shred" (the realised money is already booked
+   //--- above, RegisterClose only adds the remaining delta ~= 0) -----
+   if(rest < vmin - 1e-8)
+      TP_Legs_RegisterClose(leg, "shred", closePrice);
 
    TP_LogInfo(StringFormat("Shred done on %s: realised %.2f, bank %.2f -> %.2f, shredded total %.2f",
                            TP_LegName(leg), realised, bankBefore, g_tp.bank, g_tp.cycleShredded));
-   g_tp.legs[leg].lastReason = "";   // the state changed, a later block logs again
    TP_State_Save();
    return true;
   }

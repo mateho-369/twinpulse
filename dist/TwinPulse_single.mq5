@@ -83,6 +83,15 @@ enum ENUM_TP_MODE
    TP_ONE_SIDE   = 2    // ONE_SIDE : with-H1-trend side only, no hedge
   };
 
+//--- entry modes (input EntryMode) -----------------------------------
+#define TP_ENTRY_NORMAL  0        // the normal trigger (regime + BB)
+#define TP_ENTRY_RANDOM  1        // RANDOM control: start on a new M5 bar
+
+//--- leg sets (input LegSet) -----------------------------------------
+#define TP_LEGSET_AB     0        // both slots A and B
+#define TP_LEGSET_A      1        // only the slot A legs
+#define TP_LEGSET_B      2        // only the slot B legs
+
 //--- position sizing mode --------------------------------------------
 enum ENUM_TP_RISKMODE
   {
@@ -98,6 +107,9 @@ input group "=== TwinPulse - general ==="
 
 input long   Magic              = TP_MAGIC_DEFAULT; // EA magic number (1..999999999)
 input ENUM_TP_MODE Mode          = TP_FULL;         // Mode: FULL / PURE_IDEA / ONE_SIDE
+input int    EntryMode          = 0;               // Entry: 0 = normal trigger, 1 = RANDOM (control)
+input double RandomStartProb    = 0.02;            // RANDOM: start probability per M5 bar (0..1)
+input int    RandomSeed         = 1;               // RANDOM: MathSrand seed (>= 1)
 input bool   AllowLive          = false;           // Allow trading on a REAL account
 input bool   ShowPanel          = true;            // Show the on-chart panel
 input bool   EnableFileLog      = true;            // Write TwinPulse.log in Common\Files
@@ -112,6 +124,7 @@ input int    MaxOrderRetries    = 3;               // Retries for requote / pric
 input group "=== TwinPulse - legs and sizing ==="
 
 input int    LegsPerSide        = 2;               // Legs per side (1..2, MaxLegs=4)
+input int    LegSet             = 0;               // Legs: 0 = A+B, 1 = only A, 2 = only B
 input double BaseLot            = 0.01;            // Lot per leg (0.01..1.00)
 input double LotMultiplier      = 1.0;             // Re-open lot escalation (1.0..1.5, >1 needs the risk flag)
 input bool   IUnderstandMartingaleRisk = false;     // I understand >1.0 multiplier is martingale-like
@@ -376,7 +389,14 @@ long TP_StopMinPoints(const long stopsLevelPts, const long freezeLevelPts)
 //+------------------------------------------------------------------+
 //| Log de-duplication (pure) + log counters for the OnDeinit summary  |
 //+------------------------------------------------------------------+
-long g_logLinesWritten  = 0;   // every line written to a log / CSV file
+//--- g_logLinesWritten counts EXACTLY the lines written to            |
+//--- TwinPulse.log (TP_LogFileWrite), g_csvRowsWritten the rows       |
+//--- written to the legs / cycles CSVs (TP_CsvAppend). The log FILE  |
+//--- can contain FEWER lines than were written: the 2 MB rotation     |
+//--- deletes the old content and starts over. The OnDeinit summary    |
+//--- reports both counters.                                          |
+long g_logLinesWritten  = 0;
+long g_csvRowsWritten   = 0;
 long g_logDupSuppressed = 0;   // duplicate messages that were skipped
 
 //+------------------------------------------------------------------+
@@ -672,6 +692,36 @@ bool TP_LegIsBuy(const int legIndex)
   }
 
 //+------------------------------------------------------------------+
+//| TP_CloseByTicketsOk - a Close By needs two different, non-zero    |
+//| tickets. A request with a zero ticket is invalid and must never   |
+//| be sent (pure).                                                   |
+//+------------------------------------------------------------------+
+bool TP_CloseByTicketsOk(const ulong ticket1, const ulong ticket2)
+  {
+   if(ticket1 == 0 || ticket2 == 0) return false;
+   if(ticket1 == ticket2) return false;
+   return true;
+  }
+
+//+------------------------------------------------------------------+
+//| TP_SpreadCost - the spread a position paid at the open, in money  |
+//| spread (price) x volume x contract size (pure)                    |
+//+------------------------------------------------------------------+
+double TP_SpreadCost(const double spread, const double volume, const double contractSize)
+  {
+   return spread * volume * contractSize;
+  }
+
+//+------------------------------------------------------------------+
+//| TP_GrossBeforeSpread - the P/L of a closed leg before the spread  |
+//| was paid: net + spread cost (pure)                                |
+//+------------------------------------------------------------------+
+double TP_GrossBeforeSpread(const double netPnl, const double spreadCost)
+  {
+   return netPnl + spreadCost;
+  }
+
+//+------------------------------------------------------------------+
 //| TP_LegMirror - the opposite leg of the same slot                   |
 //+------------------------------------------------------------------+
 int TP_LegMirror(const int legIndex)
@@ -692,6 +742,17 @@ int TP_LegMirror(const int legIndex)
 int TP_LegSlot(const int legIndex)
   {
    return (legIndex % TP_SLOT_COUNT);
+  }
+
+//+------------------------------------------------------------------+
+//| TP_LegSetAllows - is the leg part of the configured leg set?      |
+//| LegSet: 0 = A+B, 1 = only slot A, 2 = only slot B (pure)          |
+//+------------------------------------------------------------------+
+bool TP_LegSetAllows(const int legIndex, const int legSet)
+  {
+   if(legSet == 1) return (TP_LegSlot(legIndex) == 0);
+   if(legSet == 2) return (TP_LegSlot(legIndex) == 1);
+   return true;
   }
 
 //+------------------------------------------------------------------+
@@ -851,7 +912,7 @@ bool TP_IsFriday(const datetime t)
 #define TP_LOG_MAX_BYTES  2097152     // 2 MB, then the log file is recycled
 
 #define TP_LOG_HEADER     "time,level,symbol,magic,message"
-#define TP_LEGS_HEADER    "time,cycle,leg,side,volume,open_price,close_price,reason,profit,bank,regime,spread,atr5"
+#define TP_LEGS_HEADER    "time,cycle,leg,side,volume,open_price,close_price,reason,profit,bank,regime,spread,atr5,spread_open,spread_cost,gross"
 #define TP_CYCLES_HEADER  "time,cycle_id,start_time,end_time,regime,legs_opened,legs_closed,realized,bank,shredded,reason,spread,atr5"
 
 #define TP_FLUSH_INTERVAL_MS   60000  // FileFlush at most once per 60 s
@@ -874,13 +935,15 @@ int TP_LogOpenFile(const string fileName, const string header)
    //--- delimiter, codepage). A misplaced FILE_COMMON as the 4th
    //--- argument is used as the codepage and the file lands in the
    //--- local MQL5\Files instead of Common\Files (empty in the tester).
+   //--- NOTE: FILE_READ|FILE_WRITE already CREATES a missing file, so
+   //--- "open failed" never tells us the file is new - the header is
+   //--- written whenever the file is empty instead.
    int handle = FileOpen(fileName, FILE_READ | FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ | FILE_COMMON, ',', CP_ACP);
-   bool created = (handle == INVALID_HANDLE);
-   if(created)
+   if(handle == INVALID_HANDLE)
       handle = FileOpen(fileName, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ | FILE_COMMON, ',', CP_ACP);
    if(handle == INVALID_HANDLE) return INVALID_HANDLE;
 
-   if(created)
+   if(FileSize(handle) == 0)
       FileWriteString(handle, header + "\n");
 
    FileSeek(handle, 0, SEEK_END);
@@ -951,7 +1014,7 @@ void TP_LogFileWrite(const string line)
      }
 
    FileWriteString(g_logHandle, line + "\n");
-   g_logLinesWritten++;
+   g_logLinesWritten++;   // TwinPulse.log lines only (see Utils.mqh)
   }
 
 //+------------------------------------------------------------------+
@@ -1024,7 +1087,7 @@ void TP_CsvAppend(const string fileName, const string header, const string line)
      }
 
    FileWriteString(handle, line + "\n");
-   g_logLinesWritten++;
+   g_csvRowsWritten++;   // CSV rows only (see Utils.mqh)
   }
 
 //+------------------------------------------------------------------+
@@ -1033,15 +1096,17 @@ void TP_CsvAppend(const string fileName, const string header, const string line)
 void TP_LogLegCSV(const int legIndex, const int cycleId, const double volume,
                   const double openPrice, const double closePrice, const double profit,
                   const string reason, const double bank, const string regime,
-                  const double spread, const double atr5)
+                  const double spread, const double atr5,
+                  const double spreadOpen, const double spreadCost, const double gross)
   {
-   string line = StringFormat("%s,%d,%s,%s,%.2f,%s,%s,%s,%.2f,%.2f,%s,%.3f,%.3f",
+   string line = StringFormat("%s,%d,%s,%s,%.2f,%s,%s,%s,%.2f,%.2f,%s,%.3f,%.3f,%.3f,%.2f,%.2f",
                               TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS),
                               cycleId, TP_LegName(legIndex),
                               TP_LegIsBuy(legIndex) ? "BUY" : "SELL",
                               volume,
                               TP_Str(openPrice, 3), TP_Str(closePrice, 3),
-                              reason, profit, bank, regime, spread, atr5);
+                              reason, profit, bank, regime, spread, atr5,
+                              spreadOpen, spreadCost, gross);
    TP_CsvAppend(TP_LEGS_CSV, TP_LEGS_HEADER, line);
   }
 
@@ -1100,6 +1165,9 @@ struct TpLegState
    int                modifyFails;  // consecutive failed stop modifications
    datetime           modifyBackoff; // no stop modification before this time
    string             lastReason;   // log de-dup: last block reason of this leg
+   double             spreadOpen;   // spread at the open, price units
+   double             spreadCost;   // spread x volume x contract size at the open
+   bool               booked;       // already written to legs.csv for this session
   };
 
 //--- global EA state --------------------------------------------------
@@ -1151,6 +1219,8 @@ struct TpStats
    int       closeFailures;   // failed close requests
    int       closeByCount;    // executed Close By nettings
    int       stopThrough;     // legs closed with the exit reason STOP_THROUGH
+   double    grossBeforeSpread; // sum of the gross P/L of all closed legs
+   double    spreadPaid;      // sum of the spread cost of all closed legs
   };
 
 //--- the single global state object ----------------------------------
@@ -1202,6 +1272,8 @@ void TP_State_Init(void)
    g_stats.closeFailures  = 0;
    g_stats.closeByCount   = 0;
    g_stats.stopThrough    = 0;
+   g_stats.grossBeforeSpread = 0.0;
+   g_stats.spreadPaid     = 0.0;
 
    for(int i = 0; i < TP_LEG_COUNT; i++)
      {
@@ -1224,6 +1296,10 @@ void TP_State_Init(void)
       g_tp.legs[i].lastModify = 0;
       g_tp.legs[i].modifyFails = 0;
       g_tp.legs[i].modifyBackoff = 0;
+      g_tp.legs[i].lastReason = "";
+      g_tp.legs[i].spreadOpen = 0.0;
+      g_tp.legs[i].spreadCost = 0.0;
+      g_tp.legs[i].booked     = false;
      }
   }
 
@@ -1333,7 +1409,11 @@ void TP_State_SyncPositions(void)
 
       g_tp.legs[legIdx].open       = true;
       g_tp.legs[legIdx].ticket     = ticket;
-      g_tp.legs[legIdx].positionId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+      //--- a NEW position session may be booked to the legs.csv again -
+      ulong newId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+      if(g_tp.legs[legIdx].positionId != newId)
+         g_tp.legs[legIdx].booked = false;
+      g_tp.legs[legIdx].positionId = newId;
       g_tp.legs[legIdx].type       = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
       g_tp.legs[legIdx].volume     = PositionGetDouble(POSITION_VOLUME);
       g_tp.legs[legIdx].openPrice  = PositionGetDouble(POSITION_PRICE_OPEN);
@@ -2019,6 +2099,13 @@ bool TP_Exec_OpenLeg(const int legIndex, const double volume, const double sl, c
                            what, isBuy ? "BUY" : "SELL", volume,
                            TP_Str(price, g_digits), result.deal));
    g_lastOpenBlock = "";   // a real open, a later block logs again
+
+   //--- spread accounting for the decision analysis -----------------
+   double spreadNow = tick.ask - tick.bid;
+   double contract  = SymbolInfoDouble(g_symbol, SYMBOL_TRADE_CONTRACT_SIZE);
+   g_tp.legs[legIndex].spreadOpen = spreadNow;
+   g_tp.legs[legIndex].spreadCost = TP_SpreadCost(spreadNow, volume, contract);
+   g_tp.legs[legIndex].booked     = false;
    return true;
   }
 
@@ -2092,7 +2179,10 @@ ENUM_TP_CLOSE_RESULT TP_Exec_CloseLeg(const ulong ticket)
 //+------------------------------------------------------------------+
 ENUM_TP_CLOSE_RESULT TP_Exec_CloseBy(const ulong ticket1, const ulong ticket2)
   {
-   if(ticket1 == 0 || ticket2 == 0 || ticket1 == ticket2) return TP_CLOSE_NOPAIR;
+   //--- a Close By with a zero or identical ticket is invalid: never
+   //--- sent (the terminal prints "failed close position #0 ..." and
+   //--- the server answers "Invalid request")
+   if(!TP_CloseByTicketsOk(ticket1, ticket2)) return TP_CLOSE_NOPAIR;
 
    //--- both tickets must exist ---------------------------------------
    bool   alive1 = PositionSelectByTicket(ticket1);
@@ -2915,6 +3005,10 @@ void TP_Regime_Update(void)
 // (already inlined) project header: State.mqh
 // (already inlined) project header: Execution.mqh
 
+//--- forward declaration, implemented in Legs.mqh (which includes this
+//--- file): a full shred books the closed leg exactly once -----------
+void TP_Legs_RegisterClose(const int legIndex, const string reason, const double closePrice);
+
 //+------------------------------------------------------------------+
 //| TP_Bank_ShredCost - bank needed to shred one step                 |
 //|  (the loss of the step plus the cost of the spread)                |
@@ -3041,10 +3135,16 @@ bool TP_Bank_TryShred(void)
    TP_Bank_Add(realised);
    g_tp.legs[leg].realized += realised;
    g_tp.cycleShredded += MathMax(0.0, -realised);
+   g_tp.legs[leg].lastReason = "";   // the state changed, a later block logs again
+
+   //--- a full shred closes the leg: exactly one legs.csv row with the
+   //--- real exit reason "shred" (the realised money is already booked
+   //--- above, RegisterClose only adds the remaining delta ~= 0) -----
+   if(rest < vmin - 1e-8)
+      TP_Legs_RegisterClose(leg, "shred", closePrice);
 
    TP_LogInfo(StringFormat("Shred done on %s: realised %.2f, bank %.2f -> %.2f, shredded total %.2f",
                            TP_LegName(leg), realised, bankBefore, g_tp.bank, g_tp.cycleShredded));
-   g_tp.legs[leg].lastReason = "";   // the state changed, a later block logs again
    TP_State_Save();
    return true;
   }
@@ -3081,6 +3181,9 @@ bool   TP_Legs_RebalanceCondition(const bool sideMissing, const double survivorP
 //--- log de-dup: the "Cycle start aborted" warning repeats every timer
 //--- tick while the opens are blocked, it is logged once per state ---
 string g_cycleStartBlock = "";
+
+//--- RANDOM entry control: one probability roll per new M5 bar -------
+datetime g_lastEntryRoll = 0;
 
 //+------------------------------------------------------------------+
 //| TP_Legs_CostFloorOf - pure cost floor calculation                  |
@@ -3352,6 +3455,10 @@ bool TP_Legs_OpenOne(const int legIndex, const bool isReopen)
 //+------------------------------------------------------------------+
 void TP_Legs_RegisterClose(const int legIndex, const string reason, const double closePrice)
   {
+   //--- exactly one legs.csv row per open session of a leg ----------
+   if(g_tp.legs[legIndex].booked) return;
+   g_tp.legs[legIndex].booked = true;
+
    ulong posId = g_tp.legs[legIndex].positionId;
    double price = closePrice;
    double cumulative = TP_State_RealizedForPosition(posId, g_tp.legs[legIndex].openTime, price);
@@ -3359,14 +3466,22 @@ void TP_Legs_RegisterClose(const int legIndex, const string reason, const double
    g_tp.legs[legIndex].realized = cumulative;
    TP_Bank_Add(delta);
 
+   //--- spread accounting for the decision analysis -----------------
+   double spreadCost = g_tp.legs[legIndex].spreadCost;
+   double gross      = TP_GrossBeforeSpread(delta, spreadCost);
+   g_stats.grossBeforeSpread += gross;
+   g_stats.spreadPaid        += spreadCost;
+
    g_tp.closedLegs++;
    g_tp.legs[legIndex].wasOpen = false;
+   g_tp.legs[legIndex].open    = false;   // closed: never touched again by the close paths
    g_tp.legs[legIndex].lastReason = "";   // the state changed, a block may log again
 
    TP_LogLegCSV(legIndex, g_tp.cycleId, g_tp.legs[legIndex].volume,
                 g_tp.legs[legIndex].openPrice, price, delta, reason,
                 g_tp.bank, TP_RegimeName(g_tp.regime),
-                TP_Exec_CurrentSpreadPrice(), g_tp.atr5);
+                TP_Exec_CurrentSpreadPrice(), g_tp.atr5,
+                g_tp.legs[legIndex].spreadOpen, spreadCost, gross);
   }
 
 //+------------------------------------------------------------------+
@@ -3399,7 +3514,7 @@ void TP_Legs_CloseWinner(const int legIndex)
    int mirror = TP_LegMirror(legIndex);
    ulong ticket = g_tp.legs[legIndex].ticket;
 
-   if(g_tp.legs[mirror].open)
+   if(g_tp.legs[mirror].open && TP_CloseByTicketsOk(ticket, g_tp.legs[mirror].ticket))
      {
       double v1 = g_tp.legs[legIndex].volume;
       double v2 = g_tp.legs[mirror].volume;
@@ -3615,30 +3730,46 @@ void TP_Legs_TryStartCycle(void)
    bool onlyBuy = false;
    bool onlySell = false;
 
-   if(TP_UseRegime())
+   if(EntryMode == TP_ENTRY_RANDOM)
      {
-      if(regime == TP_REG_CHAOS) return;
-      if(TP_IsOneSide())
-        {
-         if(regime != TP_REG_TREND_UP && regime != TP_REG_TREND_DOWN) return;
-         onlyBuy  = (regime == TP_REG_TREND_UP);
-         onlySell = (regime == TP_REG_TREND_DOWN);
-        }
-      else if(!TP_IsPureIdea())
-        {
-         if(regime != TP_REG_RANGE) return;
-        }
+      //--- RANDOM control: the entry trigger and the regime filter are
+      //--- ignored for STARTING a cycle - on every new M5 bar the
+      //--- cycle starts with probability RandomStartProb. Exits,
+      //--- brakes, session / rollover filters and the lot size are
+      //--- identical to the normal mode. -----------------------------
+      datetime bar = iTime(g_symbol, PERIOD_M5, 0);
+      if(bar == 0 || bar == g_lastEntryRoll) return;   // one roll per M5 bar
+      g_lastEntryRoll = bar;
+      double roll = (double)MathRand() / 32767.0;
+      if(roll >= RandomStartProb) return;
      }
-
-   //--- the price must be close to the Bollinger middle line ---------
-   double mid = g_tp.regimeBbMid;
-   if(mid > 0.0)
+   else
      {
-      MqlTick tick;
-      if(!SymbolInfoTick(g_symbol, tick)) return;
-      double price = (tick.ask + tick.bid) * 0.5;
-      double maxDist = BBRangeATR * g_tp.atrM15;
-      if(MathAbs(price - mid) > maxDist) return;
+      if(TP_UseRegime())
+        {
+         if(regime == TP_REG_CHAOS) return;
+         if(TP_IsOneSide())
+           {
+            if(regime != TP_REG_TREND_UP && regime != TP_REG_TREND_DOWN) return;
+            onlyBuy  = (regime == TP_REG_TREND_UP);
+            onlySell = (regime == TP_REG_TREND_DOWN);
+           }
+         else if(!TP_IsPureIdea())
+           {
+            if(regime != TP_REG_RANGE) return;
+           }
+        }
+
+      //--- the price must be close to the Bollinger middle line ------
+      double mid = g_tp.regimeBbMid;
+      if(mid > 0.0)
+        {
+         MqlTick tick;
+         if(!SymbolInfoTick(g_symbol, tick)) return;
+         double price = (tick.ask + tick.bid) * 0.5;
+         double maxDist = BBRangeATR * g_tp.atrM15;
+         if(MathAbs(price - mid) > maxDist) return;
+        }
      }
 
    //--- start the cycle ------------------------------------------------
@@ -3668,6 +3799,7 @@ void TP_Legs_TryStartCycle(void)
    int opened = 0;
    for(int i = 0; i < TP_LEG_COUNT; i++)
      {
+      if(!TP_LegSetAllows(i, LegSet)) continue;
       if(onlyBuy  && !TP_LegIsBuy(i))  continue;
       if(onlySell && TP_LegIsBuy(i))   continue;
       if(TP_Legs_OpenOne(i, false)) opened++;
@@ -3708,6 +3840,7 @@ void TP_Legs_TryRebalance(void)
      {
       if(g_tp.legs[i].open) continue;
       if(!g_tp.legs[i].used) continue;         // never opened in this cycle
+      if(!TP_LegSetAllows(i, LegSet)) continue;
 
       string reason = "";
       if(!TP_Legs_ReopenAllowed(i, reason))
@@ -3754,11 +3887,15 @@ void TP_Legs_CloseCycle(const string reason)
       int sellLeg = (slot == 0) ? TP_LEG_SELL_A : TP_LEG_SELL_B;
       if(!g_tp.legs[buyLeg].open || !g_tp.legs[sellLeg].open) continue;
       if(MathAbs(g_tp.legs[buyLeg].volume - g_tp.legs[sellLeg].volume) > 1e-8) continue;
+      //--- never send a Close By with a zero / identical ticket ------
+      if(!TP_CloseByTicketsOk(g_tp.legs[buyLeg].ticket, g_tp.legs[sellLeg].ticket)) continue;
 
       if(TP_Exec_CloseBy(g_tp.legs[buyLeg].ticket, g_tp.legs[sellLeg].ticket) == TP_CLOSE_OK)
         {
-         TP_Legs_RegisterClose(buyLeg,  "cycle_closeby", 0.0);
-         TP_Legs_RegisterClose(sellLeg, "cycle_closeby", 0.0);
+         //--- every leg gets its REAL exit reason (e.g. "rollover
+         //--- flatten"), not a generic "cycle_closeby" ---------------
+         TP_Legs_RegisterClose(buyLeg,  reason, 0.0);
+         TP_Legs_RegisterClose(sellLeg, reason, 0.0);
         }
      }
 
@@ -3767,7 +3904,7 @@ void TP_Legs_CloseCycle(const string reason)
      {
       if(!g_tp.legs[i].open) continue;
       if(TP_Exec_CloseLeg(g_tp.legs[i].ticket) == TP_CLOSE_OK)
-         TP_Legs_RegisterClose(i, "cycle_close", 0.0);
+         TP_Legs_RegisterClose(i, reason, 0.0);
      }
 
    //--- book the legs that were already gone before the close ---------
@@ -3976,6 +4113,11 @@ int OnInit()
    if(g_legsPerSide < 1) g_legsPerSide = 1;
    if(g_legsPerSide > 2) g_legsPerSide = 2;
 
+   //--- deterministic RANDOM entry (EntryMode = 1) --------------------
+   int seed = RandomSeed;
+   if(seed < 1) seed = 1;
+   MathSrand(seed);
+
    //--- trade objects -------------------------------------------------
    g_trade.SetExpertMagicNumber((ulong)g_magic);
    g_trade.SetDeviationInPoints(DeviationPoints);
@@ -4088,12 +4230,16 @@ void OnDeinit(const int reason)
 
    //--- execution counters: the smoke test proof for the stop / close -
    //--- fixes. Print() so the lines land in the tester journal.       --
+   //--- "log lines written" counts TwinPulse.log lines exactly (the   --
+   //--- file can hold less after a 2 MB rotation), "csv rows" the     --
+   //--- legs / cycles CSV rows.                                       --
    string execSummary = StringFormat(
-      "exec summary: modify attempts %d, modify failures %d, closes %d, close failures %d, Close By %d, STOP_THROUGH %d, log lines written %d, duplicates suppressed %d",
+      "exec summary: modify attempts %d, modify failures %d, closes %d, close failures %d, Close By %d, STOP_THROUGH %d, log lines written %d, csv rows written %d, duplicates suppressed %d, gross before spread %.2f, spread paid %.2f",
       g_stats.modifyAttempts, g_stats.modifyFailures,
       g_stats.closeAttempts, g_stats.closeFailures,
       g_stats.closeByCount, g_stats.stopThrough,
-      (int)g_logLinesWritten, (int)g_logDupSuppressed);
+      (int)g_logLinesWritten, (int)g_csvRowsWritten, (int)g_logDupSuppressed,
+      g_stats.grossBeforeSpread, g_stats.spreadPaid);
    Print("TwinPulse | ", execSummary);
    TP_LogInfo(execSummary);
 
