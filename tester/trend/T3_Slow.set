@@ -1,0 +1,45 @@
+; ==========================================================================
+;  TwinPulse Trend - round 3, T3_Slow
+;  slower trend: EMA 100/300, ADX 25
+;  Risk 0.5% of equity per trade, one position, stop placed before the entry,
+;  no hedge, no averaging, no martingale, no lot increase. AllowLive is not
+;  an input here: this EA only ever runs in the strategy tester.
+;  Run:  powershell -File tools\run_batch.ps1 -Preset tester\trend
+;        -Expert TwinPulse\TwinPulseTrend -Period H1 -Model 2
+; ==========================================================================
+
+;--- identity
+InpMagic=26101702
+InpComment=TPT
+;--- sizing
+InpRiskPct=0.50
+InpFixedLots=0.00
+InpMaxLots=1.00
+;--- signal
+InpFastEMA=100
+InpSlowEMA=300
+InpADXPeriod=14
+InpMinADX=25.00
+InpATRPeriod=14
+InpEntryMode=0
+InpRandomSeed=1
+InpAllowLong=true
+InpAllowShort=true
+;--- exits
+InpSL_ATR=1.50
+InpTP_ATR=4.00
+InpBE_ATR=1.00
+InpBE_LockPrice=0.00
+InpTrailStart_ATR=2.00
+InpTrail_ATR=2.50
+InpMaxBarsInTrade=0
+;--- protection
+InpMaxSpread=0.60
+InpDailyStopPct=3.00
+InpMaxDrawdownPct=20.00
+InpSessionStartHour=1
+InpSessionEndHour=20
+InpFridayStopHour=20
+;--- logging
+InpWriteCsv=true
+InpVerboseLog=true

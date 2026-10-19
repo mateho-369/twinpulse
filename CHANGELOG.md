@@ -7,6 +7,23 @@ The format follows `Keep a Changelog`, the project uses semantic versioning.
 
 ### Added
 
+* `MQL5/Experts/TwinPulse/TwinPulseTrend.mq5` - **round 3**: a new,
+  independent EA. One position, no hedge, no averaging, risk sized as 0.5%
+  of equity (so it is scale-free, unlike the hedge EA), stop placed with the
+  order and never widened, break-even and ATR trailing, daily loss and max
+  drawdown halts, and a CSV whose `pos_net` must sum to the report net.
+* `tester/trend/T1..T8.set` - six trend variants plus two controls
+  (`T7_RandomCtl` random entry with identical exits, `T8_LongCtl` always
+  long), so the signal can be measured against luck instead of against zero.
+* `docs/DECISION_RULES_2.md` - the round-3 gates, **frozen before any
+  result**. Seven gates on the forward half, gate 3 requires beating the
+  random control by 0.15 PF, gate 6 refuses a result that rests on one trade.
+* `docs/RESEARCH_NOTES.md` - the arithmetic behind the idea: the hedge paid
+  0.253 of spread per leg to chase ~1.5 of gross move, a 4 ATR trend target
+  pays the same 0.26 to chase 40-80.
+* `tools/run_batch.ps1` gained `-Expert`, `-Period` and `-Model` so the same
+  harness runs the new EA without editing the script.
+
 * `docs/ANALYSIS_3.md` - the same best variant on a **100 USD** deposit. It
   loses 8.47 USD back and 19.84 USD forward (-28.3% over the period) and
   never makes more than 4.02 USD in a day. The EA is not scale-free: the

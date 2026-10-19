@@ -34,6 +34,16 @@ param(
     # reports / CSVs are moved into _old_<timestamp>, never deleted)
     [switch]$Redo,
 
+    # optional: which expert to run ("Folder\Name" under MQL5\Experts)
+    [string]$Expert = "TwinPulse\TwinPulse",
+
+    # optional: chart timeframe of the run (the EA picks its own signal TF)
+    [string]$Period = "M5",
+
+    # optional: 4 = every tick based on real ticks, 2 = 1 minute OHLC.
+    # A trend EA on H1 does not need tick data and runs far faster on 2.
+    [int]$Model = 4,
+
     # paths: <INSTALL> = folder with terminal64.exe, <DATA> = terminal data
     # folder (File -> Open Data Folder in the terminal)
     [string]$InstallDir = "C:\Program Files\MetaTrader 5",
@@ -335,11 +345,11 @@ foreach($v in $variants)
 ;  so that BOTH have a saved tester report).
 ; ==========================================================================
 [Tester]
-Expert=TwinPulse\TwinPulse
+Expert=$Expert
 ExpertParameters=$n.set
 Symbol=$Symbol
-Period=M5
-Model=4
+Period=$Period
+Model=$Model
 ExecutionMode=150
 Deposit=$Deposit
 Currency=USD
