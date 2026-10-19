@@ -22,6 +22,14 @@ The format follows `Keep a Changelog`, the project uses semantic versioning.
   decodes UTF-16 reports / CSVs, never copies a single column into the
   forward side, and refuses to give a verdict when the history quality is
   below 90% or the forward report is missing.
+* **Report statistics lost half of their values:** MT5 packs three
+  label/value pairs into one `<tr>` (`Gross Profit: | 856.85 | Balance
+  Drawdown Maximal: | 185.46 (18.17%) | Equity Drawdown Maximal: |
+  176.75 (17.47%)`), and the parser only read the first pair - so the
+  equity drawdown gate always read `n/a` and the `%`-based drawdown was
+  never seen. `parse_report` now registers the inline labels, and the
+  drawdown gate reads `Equity Drawdown Maximal` (percent) instead of
+  `Equity Drawdown Absolute` (money).
 * **`sum(pos_net)` vs the report net:** the check compared the whole CSV
   (back + forward) with a backtest-only report, so 5 of 8 variants showed a
   false `**MISMATCH**`. The check now uses only the rows the report covers

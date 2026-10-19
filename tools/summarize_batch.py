@@ -124,6 +124,14 @@ def parse_report(path):
                 pass
         label = first.lower()
         out["rows"].setdefault(label, []).append(cells[1:])
+        # MT5 packs three label/value pairs into one <tr>:
+        #   "Gross Profit: | 856.85 | Balance Drawdown Maximal: | 185 (18%) | ..."
+        # register the inline labels too, otherwise every *Maximal* /
+        # *Relative* value (equity drawdown maximal, recovery factor of the
+        # second column, ...) is invisible.
+        for i in range(1, len(cells) - 1):
+            if cells[i].endswith(":") and not cells[i + 1].endswith(":"):
+                out["rows"].setdefault(cells[i].strip().lower(), []).append(cells[i + 1:])
     for label, valuerows in out["rows"].items():
         if "history quality" in label:
             for v in valuerows[0]:
@@ -510,9 +518,11 @@ def main():
         is_random = v in RANDOM
         _, fwd_net = pair(v, ["total net profit"])
         _, fwd_pf = pair(v, ["profit factor"])
-        _, fwd_dd = pair(v, ["equity drawdown"], pct=True)
+        # the MAXIMAL drawdown, in percent - not "Equity Drawdown Absolute"
+        # (that is money, and it sits in the "Total Net Profit" row)
+        _, fwd_dd = pair(v, ["equity drawdown maximal"], pct=True)
         if fwd_dd is None:
-            _, fwd_dd = pair(v, ["drawdown"], pct=True)
+            _, fwd_dd = pair(v, ["equity drawdown relative"], pct=True)
         _, fwd_rf = pair(v, ["recovery factor"])
         total_legs = legs.count()
         hq = (d["report_back"] or {}).get("history_quality")
@@ -627,9 +637,9 @@ def main():
         b_ref = legs.net_ref(d["back_rows"], ref, csize)
         f_ref = legs.net_ref(d["fwd_rows"], ref, csize)
         b_pf, f_pf = pair(v, ["profit factor"])
-        _, f_dd = pair(v, ["equity drawdown"], pct=True)
+        _, f_dd = pair(v, ["equity drawdown maximal"], pct=True)
         if f_dd is None:
-            _, f_dd = pair(v, ["drawdown"], pct=True)
+            _, f_dd = pair(v, ["equity drawdown relative"], pct=True)
         _, f_rf = pair(v, ["recovery factor"])
         g = allg[v]
         hq = g["hq"]
