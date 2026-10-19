@@ -7,6 +7,15 @@ The format follows `Keep a Changelog`, the project uses semantic versioning.
 
 ### Added
 
+* `docs/ANALYSIS_2.md` - the round-2 result. The shred hypothesis was
+  confirmed (back half -264.60 -> -94.56 with the same risk and the same cost
+  per leg), `W2` (time stop) and `W4` (spread filter) turned out to be dead
+  levers, gross PF tops out at 1.06, and under the frozen rules the owner
+  accepted rule 3: **stop the hedge idea** (no demo, no merge to `main`, no
+  further parameter rounds). The two remaining loss sources - hard stops
+  (-1,614.21) and a basket target that closes baskets at a loss (-517.22) -
+  are documented for a future strategy, not as a licence to keep tuning.
+
 * Round-2 upgrade (`docs/UPGRADE_PLAN.md`): the first batch measured the
   structural loss - the bank shred closed 924 losing legs for -1,892.50 while
   the 497 legs that reached target made +1,886.37, i.e. the recycle exactly
