@@ -565,8 +565,10 @@ bool TP_Open(int dir, double atr, double spread)
         }
      }
 
+   string dirName = "SELL";
+   if(dir > 0) dirName = "BUY";
    TP_Log(StringFormat("OPEN %s %s lots=%.2f at %.3f sl=%.3f tp=%.3f atr=%.3f spread=%.3f",
-                       (dir > 0 ? "BUY" : "SELL"), InpComment, lots, fill, sl, tp, atr, spread));
+                       dirName, InpComment, lots, fill, sl, tp, atr, spread));
    return true;
   }
 
@@ -664,8 +666,11 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
       spreadCost = (g_posSpread / tickSz) * tickVal * g_posLots;
 
    TP_CsvRow(when, price, reason, profit, swap, comm, spreadCost);
+
+   string sideName = "SHORT";
+   if(g_posSide > 0) sideName = "LONG";
    TP_Log(StringFormat("CLOSE %s %s %.2f reason=%s net=%.2f",
-                       (g_posSide > 0 ? "LONG" : "SHORT"),
+                       sideName,
                        DoubleToString(price, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)),
                        profit + swap + comm, reason, profit + swap + comm));
 
