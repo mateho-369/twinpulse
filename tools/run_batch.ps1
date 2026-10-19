@@ -423,4 +423,6 @@ Visual=0
   }
 
 Write-Host "[batch] all variants processed."
-Write-Host "[batch] now run:  python tools\summarize_batch.py --data `"$DataDir`" --from $FromDate --to $ToDate --symbol $Symbol"
+#--- --data alone means reports\decision: after a -Preset run that is the
+#--- WRONG batch, so print the reports folder explicitly -----------------
+Write-Host "[batch] now run:  python tools\summarize_batch.py --reports `"$reports`" --from $FromDate --to $ToDate --symbol $Symbol"
