@@ -31,6 +31,7 @@ struct TpLegState
    datetime           lastModify;   // last stop modification ATTEMPT (success or failure)
    int                modifyFails;  // consecutive failed stop modifications
    datetime           modifyBackoff; // no stop modification before this time
+   string             lastReason;   // log de-dup: last block reason of this leg
   };
 
 //--- global EA state --------------------------------------------------

@@ -374,6 +374,25 @@ long TP_StopMinPoints(const long stopsLevelPts, const long freezeLevelPts)
   }
 
 //+------------------------------------------------------------------+
+//| Log de-duplication (pure) + log counters for the OnDeinit summary  |
+//+------------------------------------------------------------------+
+long g_logLinesWritten  = 0;   // every line written to a log / CSV file
+long g_logDupSuppressed = 0;   // duplicate messages that were skipped
+
+//+------------------------------------------------------------------+
+//| TP_DedupShouldLog - true only when the reason changed (or is the   |
+//| first one): the same reason twice is logged once. The caller keeps |
+//| one "last reason" string per leg (or per message family) and       |
+//| clears it when the leg state changes, so a fresh state logs again. |
+//+------------------------------------------------------------------+
+bool TP_DedupShouldLog(string &lastReason, const string reason)
+  {
+   if(reason == lastReason) { g_logDupSuppressed++; return false; }
+   lastReason = reason;
+   return true;
+  }
+
+//+------------------------------------------------------------------+
 //| TP_StopMinDistance - minimum distance between the market and a    |
 //| stop level in price units: max(stops, freeze, 1) x point          |
 //+------------------------------------------------------------------+
@@ -815,6 +834,13 @@ bool TP_IsFriday(const datetime t)
 //|                                                 Logger.mqh        |
 //|  TwinPulse Hedge EA                                                 |
 //|  Console output + rotating text log in Common\Files                |
+//|                                                                    |
+//|  Performance: every file keeps ONE open handle (opened once in     |
+//|  OnInit, closed in OnDeinit). Lines are appended with              |
+//|  FileWriteString, FileFlush runs at most once per 60 s (plus once  |
+//|  in OnDeinit) and the size rotation is checked at most once per    |
+//|  minute - a FileOpen/FileClose per line is far too slow in the     |
+//|  tester and wakes up the antivirus on every call.                  |
 //+------------------------------------------------------------------+
 #ifndef TP_LOGGER_MQH
 #define TP_LOGGER_MQH
@@ -824,38 +850,108 @@ bool TP_IsFriday(const datetime t)
 
 #define TP_LOG_MAX_BYTES  2097152     // 2 MB, then the log file is recycled
 
+#define TP_LOG_HEADER     "time,level,symbol,magic,message"
+#define TP_LEGS_HEADER    "time,cycle,leg,side,volume,open_price,close_price,reason,profit,bank,regime,spread,atr5"
+#define TP_CYCLES_HEADER  "time,cycle_id,start_time,end_time,regime,legs_opened,legs_closed,realized,bank,shredded,reason,spread,atr5"
+
+#define TP_FLUSH_INTERVAL_MS   60000  // FileFlush at most once per 60 s
+#define TP_ROTATE_INTERVAL_MS  60000  // size rotation check at most once per minute
+
+//--- one persistent handle per file ---------------------------------
+int    g_logHandle   = INVALID_HANDLE;   // TwinPulse.log
+int    g_legsHandle  = INVALID_HANDLE;   // TwinPulse_legs.csv
+int    g_cycleHandle = INVALID_HANDLE;   // TwinPulse_cycles.csv
+uint   g_lastFlushMs  = 0;
+uint   g_lastRotateMs = 0;
+
+//+------------------------------------------------------------------+
+//| TP_LogOpenFile - open one log file in Common\Files and append to  |
+//| the end. Writes the header when the file is new.                  |
+//+------------------------------------------------------------------+
+int TP_LogOpenFile(const string fileName, const string header)
+  {
+   //--- FILE_COMMON is a FLAG of open_flags: FileOpen(name, flags,
+   //--- delimiter, codepage). A misplaced FILE_COMMON as the 4th
+   //--- argument is used as the codepage and the file lands in the
+   //--- local MQL5\Files instead of Common\Files (empty in the tester).
+   int handle = FileOpen(fileName, FILE_READ | FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ | FILE_COMMON, ',', CP_ACP);
+   bool created = (handle == INVALID_HANDLE);
+   if(created)
+      handle = FileOpen(fileName, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ | FILE_COMMON, ',', CP_ACP);
+   if(handle == INVALID_HANDLE) return INVALID_HANDLE;
+
+   if(created)
+      FileWriteString(handle, header + "\n");
+
+   FileSeek(handle, 0, SEEK_END);
+   return handle;
+  }
+
+//+------------------------------------------------------------------+
+//| TP_LogFilesOpen - open every log file once (call from OnInit)     |
+//+------------------------------------------------------------------+
+void TP_LogFilesOpen(void)
+  {
+   if(g_logHandle == INVALID_HANDLE && EnableFileLog)
+      g_logHandle = TP_LogOpenFile(TP_LOG_FILE, TP_LOG_HEADER);
+   if(g_legsHandle == INVALID_HANDLE && WriteCsvLogs)
+      g_legsHandle = TP_LogOpenFile(TP_LEGS_CSV, TP_LEGS_HEADER);
+   if(g_cycleHandle == INVALID_HANDLE && WriteCsvLogs)
+      g_cycleHandle = TP_LogOpenFile(TP_CYCLES_CSV, TP_CYCLES_HEADER);
+   g_lastFlushMs  = GetTickCount();
+   g_lastRotateMs = GetTickCount();
+  }
+
+//+------------------------------------------------------------------+
+//| TP_LogFilesFlush - flush every handle, at most once per 60 s      |
+//| (call from OnTimer).                                              |
+//+------------------------------------------------------------------+
+void TP_LogFilesFlush(void)
+  {
+   uint nowMs = GetTickCount();
+   if(nowMs - g_lastFlushMs < TP_FLUSH_INTERVAL_MS) return;
+   g_lastFlushMs = nowMs;
+   if(g_logHandle   != INVALID_HANDLE) FileFlush(g_logHandle);
+   if(g_legsHandle  != INVALID_HANDLE) FileFlush(g_legsHandle);
+   if(g_cycleHandle != INVALID_HANDLE) FileFlush(g_cycleHandle);
+  }
+
+//+------------------------------------------------------------------+
+//| TP_LogFilesClose - flush and close every handle (call from OnDeinit) |
+//+------------------------------------------------------------------+
+void TP_LogFilesClose(void)
+  {
+   if(g_logHandle   != INVALID_HANDLE) { FileFlush(g_logHandle);   FileClose(g_logHandle);   g_logHandle   = INVALID_HANDLE; }
+   if(g_legsHandle  != INVALID_HANDLE) { FileFlush(g_legsHandle);  FileClose(g_legsHandle);  g_legsHandle  = INVALID_HANDLE; }
+   if(g_cycleHandle != INVALID_HANDLE) { FileFlush(g_cycleHandle); FileClose(g_cycleHandle); g_cycleHandle = INVALID_HANDLE; }
+  }
+
 //+------------------------------------------------------------------+
 //| TP_LogFileWrite - append one line to Common\Files\TwinPulse.log   |
 //+------------------------------------------------------------------+
 void TP_LogFileWrite(const string line)
   {
    if(!EnableFileLog) return;
+   if(g_logHandle == INVALID_HANDLE)
+      g_logHandle = TP_LogOpenFile(TP_LOG_FILE, TP_LOG_HEADER);   // lazy fallback
+   if(g_logHandle == INVALID_HANDLE) return;
 
-   //--- FILE_COMMON is a FLAG of open_flags: FileOpen(name, flags,
-   //--- delimiter, codepage). A misplaced FILE_COMMON as the 4th
-   //--- argument is used as the codepage and the file lands in the
-   //--- local MQL5\Files instead of Common\Files (empty in the tester).
-   int handle = FileOpen(TP_LOG_FILE, FILE_READ | FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ | FILE_COMMON, ',', CP_ACP);
-   bool created = (handle == INVALID_HANDLE);
-   if(created)
-      handle = FileOpen(TP_LOG_FILE, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ | FILE_COMMON, ',', CP_ACP);
-   if(handle == INVALID_HANDLE) return;
-
-   if(created)
-      FileWriteString(handle, "time,level,symbol,magic,message\n");
-
-   if(FileSize(handle) > TP_LOG_MAX_BYTES)
+   //--- size rotation, checked at most once per minute ---------------
+   uint nowMs = GetTickCount();
+   if(nowMs - g_lastRotateMs >= TP_ROTATE_INTERVAL_MS)
      {
-      FileClose(handle);
-      FileDelete(TP_LOG_FILE, FILE_COMMON);
-      handle = FileOpen(TP_LOG_FILE, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ | FILE_COMMON, ',', CP_ACP);
-      if(handle == INVALID_HANDLE) return;
-      FileWriteString(handle, "time,level,symbol,magic,message\n");
+      g_lastRotateMs = nowMs;
+      if(FileSize(g_logHandle) > TP_LOG_MAX_BYTES)
+        {
+         FileClose(g_logHandle);
+         FileDelete(TP_LOG_FILE, FILE_COMMON);
+         g_logHandle = TP_LogOpenFile(TP_LOG_FILE, TP_LOG_HEADER);
+         if(g_logHandle == INVALID_HANDLE) return;
+        }
      }
 
-   FileSeek(handle, 0, SEEK_END);
-   FileWriteString(handle, line + "\n");
-   FileClose((int)handle);
+   FileWriteString(g_logHandle, line + "\n");
+   g_logLinesWritten++;
   }
 
 //+------------------------------------------------------------------+
@@ -863,11 +959,15 @@ void TP_LogFileWrite(const string line)
 //+------------------------------------------------------------------+
 void TP_Log(const string level, const string message)
   {
-   bool isInfo  = (level == "INFO");
-   bool isWarn  = (level == "WARN");
-   bool isError = (level == "ERROR");
+   bool isInfo = (level == "INFO");
 
-   if(isInfo && !VerboseLog && !isWarn && !isError)
+   //--- in the Strategy Tester the journal stays clean: INFO goes to  |
+   //--- the file only, WARN / ERROR are printed as before.            |
+   bool toJournal = !isInfo || VerboseLog;
+   if(isInfo && (bool)MQLInfoInteger(MQL_TESTER))
+      toJournal = false;
+
+   if(!toJournal)
      {
       // info messages are only written to the file, not to the journal
       TP_LogFileWrite(StringFormat("%s,%s,%s,%d,%s",
@@ -905,24 +1005,26 @@ void TP_LogError(const string message)
 
 //+------------------------------------------------------------------+
 //| TP_CsvAppend - append one line to a CSV file in Common\Files      |
+//| (one persistent handle per file, opened on first use)              |
 //+------------------------------------------------------------------+
 void TP_CsvAppend(const string fileName, const string header, const string line)
   {
    if(!WriteCsvLogs) return;
 
-   //--- FILE_COMMON belongs to open_flags, see TP_LogFileWrite --------
-   int handle = FileOpen(fileName, FILE_READ | FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ | FILE_COMMON, ',', CP_ACP);
-   bool created = (handle == INVALID_HANDLE);
-   if(created)
-      handle = FileOpen(fileName, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ | FILE_COMMON, ',', CP_ACP);
-   if(handle == INVALID_HANDLE) return;
+   int handle = INVALID_HANDLE;
+   if(fileName == TP_LEGS_CSV) handle = g_legsHandle;
+   else if(fileName == TP_CYCLES_CSV) handle = g_cycleHandle;
 
-   if(created)
-      FileWriteString(handle, header + "\n");
+   if(handle == INVALID_HANDLE)
+     {
+      handle = TP_LogOpenFile(fileName, header);   // lazy fallback
+      if(handle == INVALID_HANDLE) return;
+      if(fileName == TP_LEGS_CSV) g_legsHandle = handle;
+      else if(fileName == TP_CYCLES_CSV) g_cycleHandle = handle;
+     }
 
-   FileSeek(handle, 0, SEEK_END);
    FileWriteString(handle, line + "\n");
-   FileClose((int)handle);
+   g_logLinesWritten++;
   }
 
 //+------------------------------------------------------------------+
@@ -940,9 +1042,7 @@ void TP_LogLegCSV(const int legIndex, const int cycleId, const double volume,
                               volume,
                               TP_Str(openPrice, 3), TP_Str(closePrice, 3),
                               reason, profit, bank, regime, spread, atr5);
-   TP_CsvAppend(TP_LEGS_CSV,
-                "time,cycle,leg,side,volume,open_price,close_price,reason,profit,bank,regime,spread,atr5",
-                line);
+   TP_CsvAppend(TP_LEGS_CSV, TP_LEGS_HEADER, line);
   }
 
 //+------------------------------------------------------------------+
@@ -960,9 +1060,7 @@ void TP_LogCycleCSV(const int cycleId, const datetime startTime, const datetime 
                               TimeToString(endTime, TIME_DATE | TIME_SECONDS),
                               regime, legsOpened, legsClosed,
                               realized, bank, shredded, reason, spread, atr5);
-   TP_CsvAppend(TP_CYCLES_CSV,
-                "time,cycle_id,start_time,end_time,regime,legs_opened,legs_closed,realized,bank,shredded,reason,spread,atr5",
-                line);
+   TP_CsvAppend(TP_CYCLES_CSV, TP_CYCLES_HEADER, line);
   }
 
 #endif // TP_LOGGER_MQH
@@ -1001,6 +1099,7 @@ struct TpLegState
    datetime           lastModify;   // last stop modification ATTEMPT (success or failure)
    int                modifyFails;  // consecutive failed stop modifications
    datetime           modifyBackoff; // no stop modification before this time
+   string             lastReason;   // log de-dup: last block reason of this leg
   };
 
 //--- global EA state --------------------------------------------------
@@ -1731,6 +1830,11 @@ bool TP_Exec_Fatal(const uint retcode)
    return false;
   }
 
+//--- log de-dup: a failing open retries every timer tick, the same
+//--- block reason / send error is logged once per state --------------
+string g_lastSendBlock = "";   // TP_Exec_SendRequest errors
+string g_lastOpenBlock = "";   // open path blocks (margin, ATR, tick)
+
 //+------------------------------------------------------------------+
 //| TP_Exec_SendRequest - OrderCheck + OrderSend with retries         |
 //+------------------------------------------------------------------+
@@ -1750,7 +1854,8 @@ bool TP_Exec_SendRequest(MqlTradeRequest &request, MqlTradeResult &result, const
          if(chk == 0) chk = (uint)GetLastError();
          if(!TP_Exec_Retriable(chk))
            {
-            TP_LogError(StringFormat("%s failed in OrderCheck, code %u", what, chk));
+            if(TP_DedupShouldLog(g_lastSendBlock, StringFormat("send:%s:%u", what, chk)))
+               TP_LogError(StringFormat("%s failed in OrderCheck, code %u", what, chk));
             return false;
            }
         }
@@ -1763,7 +1868,8 @@ bool TP_Exec_SendRequest(MqlTradeRequest &request, MqlTradeResult &result, const
          if(rc == 0) rc = (uint)GetLastError();
          if(!TP_Exec_Retriable(rc))
            {
-            TP_LogError(StringFormat("%s failed: %u (%s)", what, rc, result.comment));
+            if(TP_DedupShouldLog(g_lastSendBlock, StringFormat("send:%s:%u", what, rc)))
+               TP_LogError(StringFormat("%s failed: %u (%s)", what, rc, result.comment));
             return false;
            }
         }
@@ -1771,7 +1877,10 @@ bool TP_Exec_SendRequest(MqlTradeRequest &request, MqlTradeResult &result, const
         {
          uint rc = result.retcode;
          if(rc == 0 || rc == TRADE_RETCODE_DONE || rc == TRADE_RETCODE_DONE_PARTIAL || rc == TRADE_RETCODE_PLACED)
+           {
+            g_lastSendBlock = "";   // a working request may fail and log again
             return true;
+           }
 
          if(rc == TRADE_RETCODE_INVALID_FILL)
            {
@@ -1782,7 +1891,8 @@ bool TP_Exec_SendRequest(MqlTradeRequest &request, MqlTradeResult &result, const
                request.type_filling = ORDER_FILLING_RETURN;
             else
               {
-               TP_LogError(StringFormat("%s: fill required and no alternative filling mode.", what));
+               if(TP_DedupShouldLog(g_lastSendBlock, StringFormat("send:%s:fill", what)))
+                  TP_LogError(StringFormat("%s: fill required and no alternative filling mode.", what));
                return false;
               }
             continue;
@@ -1794,14 +1904,16 @@ bool TP_Exec_SendRequest(MqlTradeRequest &request, MqlTradeResult &result, const
             continue;
            }
 
-         TP_LogError(StringFormat("%s failed: %u (%s)", what, rc, result.comment));
+         if(TP_DedupShouldLog(g_lastSendBlock, StringFormat("send:%s:%u", what, rc)))
+            TP_LogError(StringFormat("%s failed: %u (%s)", what, rc, result.comment));
          return false;
         }
 
       Sleep(150);
      }
 
-   TP_LogError(StringFormat("%s failed after %d attempts.", what, attempts));
+   if(TP_DedupShouldLog(g_lastSendBlock, StringFormat("send:%s:retries", what)))
+      TP_LogError(StringFormat("%s failed after %d attempts.", what, attempts));
    return false;
   }
 
@@ -1813,15 +1925,18 @@ bool TP_Exec_FreeMarginOk(const ENUM_ORDER_TYPE orderType, const double volume, 
    double margin = 0.0;
    if(!OrderCalcMargin(orderType, g_symbol, volume, price, margin))
      {
-      TP_LogWarn("OrderCalcMargin failed, the order is not sent.");
+      if(TP_DedupShouldLog(g_lastOpenBlock, "open: margin calc failed"))
+         TP_LogWarn("OrderCalcMargin failed, the order is not sent.");
       return false;
      }
    double free = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
    if(margin > free)
      {
-      TP_LogWarn(StringFormat("Not enough free margin: need %.2f, free %.2f.", margin, free));
+      if(TP_DedupShouldLog(g_lastOpenBlock, "open: not enough free margin"))
+         TP_LogWarn(StringFormat("Not enough free margin: need %.2f, free %.2f.", margin, free));
       return false;
      }
+   g_lastOpenBlock = "";   // the margin is fine again, a later block logs again
    return true;
   }
 
@@ -1833,7 +1948,8 @@ bool TP_Exec_OpenLeg(const int legIndex, const double volume, const double sl, c
    MqlTick tick;
    if(!SymbolInfoTick(g_symbol, tick))
      {
-      TP_LogError("SymbolInfoTick failed, cannot open a leg.");
+      if(TP_DedupShouldLog(g_lastOpenBlock, "open: symbol tick failed"))
+         TP_LogError("SymbolInfoTick failed, cannot open a leg.");
       return false;
      }
 
@@ -1882,7 +1998,8 @@ bool TP_Exec_OpenLeg(const int legIndex, const double volume, const double sl, c
      {
       if(g_tp.atr5 <= 0.0)
         {
-         TP_LogError("No ATR available, the leg is not opened without a stop loss.");
+         if(TP_DedupShouldLog(g_lastOpenBlock, "open: no ATR"))
+            TP_LogError("No ATR available, the leg is not opened without a stop loss.");
          return false;
         }
       double dist = HardSL_ATR * g_tp.atr5;
@@ -1901,6 +2018,7 @@ bool TP_Exec_OpenLeg(const int legIndex, const double volume, const double sl, c
    TP_LogInfo(StringFormat("%s OK: %s %.2f @ %s (deal %I64u)",
                            what, isBuy ? "BUY" : "SELL", volume,
                            TP_Str(price, g_digits), result.deal));
+   g_lastOpenBlock = "";   // a real open, a later block logs again
    return true;
   }
 
@@ -2356,6 +2474,10 @@ bool TP_Risk_MarginLevelOK(void)
    return (level >= MinMarginLevelPct);
   }
 
+//--- log de-dup: the cap warning repeats every timer tick while the
+//--- opens are blocked, it is logged once per state ------------------
+string g_lastVolumeBlock = "";
+
 //+------------------------------------------------------------------+
 //| TP_Risk_VolumeOK - the total volume must stay below the cap      |
 //+------------------------------------------------------------------+
@@ -2364,9 +2486,11 @@ bool TP_Risk_VolumeOK(const double extraVolume)
    double total = TP_State_TotalVolume() + extraVolume;
    if(total > MaxTotalLots + 1e-8)
      {
-      TP_LogWarn(StringFormat("MaxTotalLots reached: %.2f of %.2f lots.", total, MaxTotalLots));
+      if(TP_DedupShouldLog(g_lastVolumeBlock, "max total lots"))
+         TP_LogWarn(StringFormat("MaxTotalLots reached: %.2f of %.2f lots.", total, MaxTotalLots));
       return false;
      }
+   g_lastVolumeBlock = "";   // the cap is free again, a later block logs again
    return true;
   }
 
@@ -2880,8 +3004,11 @@ bool TP_Bank_TryShred(void)
       double fullSpread  = TP_PriceToMoney(g_symbol, vol, spread);
       if(!TP_Bank_CanShred(g_tp.bank, fullLoss, fullSpread))
         {
-         TP_LogInfo(StringFormat("Shred skipped on %s: bank %.2f does not cover the full leg loss %.2f",
-                                 TP_LegName(leg), g_tp.bank, TP_Bank_ShredCost(fullLoss, fullSpread)));
+         //--- the timer tries again every second: the same block reason
+         //--- is logged once until the leg state changes -------------
+         if(TP_DedupShouldLog(g_tp.legs[leg].lastReason, "shred skipped: bank does not cover the full leg loss"))
+            TP_LogInfo(StringFormat("Shred skipped on %s: bank %.2f does not cover the full leg loss %.2f",
+                                    TP_LegName(leg), g_tp.bank, TP_Bank_ShredCost(fullLoss, fullSpread)));
          return false;
         }
      }
@@ -2917,6 +3044,7 @@ bool TP_Bank_TryShred(void)
 
    TP_LogInfo(StringFormat("Shred done on %s: realised %.2f, bank %.2f -> %.2f, shredded total %.2f",
                            TP_LegName(leg), realised, bankBefore, g_tp.bank, g_tp.cycleShredded));
+   g_tp.legs[leg].lastReason = "";   // the state changed, a later block logs again
    TP_State_Save();
    return true;
   }
@@ -2949,6 +3077,10 @@ void TP_Legs_TryRebalance(void);
 void TP_Legs_CloseCycle(const string reason);
 double TP_Legs_TargetDistance(const int legIndex);
 bool   TP_Legs_RebalanceCondition(const bool sideMissing, const double survivorPnl, const double tolerance);
+
+//--- log de-dup: the "Cycle start aborted" warning repeats every timer
+//--- tick while the opens are blocked, it is logged once per state ---
+string g_cycleStartBlock = "";
 
 //+------------------------------------------------------------------+
 //| TP_Legs_CostFloorOf - pure cost floor calculation                  |
@@ -3170,7 +3302,8 @@ bool TP_Legs_OpenOne(const int legIndex, const bool isReopen)
    string reason = "";
    if(!TP_Risk_AllowsOpen(lot, reason))
      {
-      TP_LogInfo(StringFormat("%s not opened: %s", TP_LegName(legIndex), reason));
+      if(TP_DedupShouldLog(g_tp.legs[legIndex].lastReason, "not opened: " + reason))
+         TP_LogInfo(StringFormat("%s not opened: %s", TP_LegName(legIndex), reason));
       return false;
      }
 
@@ -3182,7 +3315,8 @@ bool TP_Legs_OpenOne(const int legIndex, const bool isReopen)
    double stopDist = TP_Legs_StopDistance();
    if(stopDist <= 0.0)
      {
-      TP_LogWarn(StringFormat("%s not opened: no ATR for the stop loss.", TP_LegName(legIndex)));
+      if(TP_DedupShouldLog(g_tp.legs[legIndex].lastReason, "not opened: no ATR"))
+         TP_LogWarn(StringFormat("%s not opened: no ATR for the stop loss.", TP_LegName(legIndex)));
       return false;
      }
 
@@ -3209,6 +3343,7 @@ bool TP_Legs_OpenOne(const int legIndex, const bool isReopen)
    g_tp.legs[legIndex].lastModify    = 0;
    g_tp.legs[legIndex].modifyFails   = 0;
    g_tp.legs[legIndex].modifyBackoff = 0;
+   g_tp.legs[legIndex].lastReason    = "";   // a new state may log again
    return true;
   }
 
@@ -3226,6 +3361,7 @@ void TP_Legs_RegisterClose(const int legIndex, const string reason, const double
 
    g_tp.closedLegs++;
    g_tp.legs[legIndex].wasOpen = false;
+   g_tp.legs[legIndex].lastReason = "";   // the state changed, a block may log again
 
    TP_LogLegCSV(legIndex, g_tp.cycleId, g_tp.legs[legIndex].volume,
                 g_tp.legs[legIndex].openPrice, price, delta, reason,
@@ -3542,10 +3678,12 @@ void TP_Legs_TryStartCycle(void)
 
    if(opened == 0)
      {
-      TP_LogWarn("Cycle start aborted, no leg could be opened.");
+      if(TP_DedupShouldLog(g_cycleStartBlock, "cycle start aborted"))
+         TP_LogWarn("Cycle start aborted, no leg could be opened.");
       g_tp.cycleId--;
       return;
      }
+   g_cycleStartBlock = "";   // a real cycle started, a later abort logs again
 
    TP_LogInfo(StringFormat("Cycle %d started: %d legs, regime %s, ATR5 %.3f, spread %.3f",
                            g_tp.cycleId, opened, TP_RegimeName(regime),
@@ -3574,13 +3712,22 @@ void TP_Legs_TryRebalance(void)
       string reason = "";
       if(!TP_Legs_ReopenAllowed(i, reason))
         {
-         TP_LogInfo(StringFormat("%s not re-opened: %s", TP_LegName(i), reason));
+         //--- the same block reason every second is logged once, the
+         //--- text is only re-logged when the reason changes ---------
+         string key = reason;
+         int cut = StringFind(key, " P/L");   // the P/L numbers change every tick
+         if(cut > 0) key = StringSubstr(key, 0, cut);
+         if(TP_DedupShouldLog(g_tp.legs[i].lastReason, "not re-opened: " + key))
+            TP_LogInfo(StringFormat("%s not re-opened: %s", TP_LegName(i), reason));
          continue;
         }
 
-      TP_LogInfo(StringFormat("%s is re-opened to balance the cycle.", TP_LegName(i)));
-      TP_Legs_OpenOne(i, true);
+      //--- a failed open retries every second: the attempt line is only
+      //--- logged when the leg really comes back ---------------------
+      bool reopened = TP_Legs_OpenOne(i, true);
       TP_State_SyncPositions();
+      if(reopened)
+         TP_LogInfo(StringFormat("%s is re-opened to balance the cycle.", TP_LegName(i)));
      }
   }
 
@@ -3835,6 +3982,9 @@ int OnInit()
    g_trade.SetTypeFillingBySymbol(g_symbol);
    g_trade.SetAsyncMode(false);
 
+   //--- one open file handle per log file (closed in OnDeinit) ---------
+   TP_LogFilesOpen();
+
    //--- state ---------------------------------------------------------
    TP_State_Init();
    TP_State_Load();
@@ -3939,12 +4089,16 @@ void OnDeinit(const int reason)
    //--- execution counters: the smoke test proof for the stop / close -
    //--- fixes. Print() so the lines land in the tester journal.       --
    string execSummary = StringFormat(
-      "exec summary: modify attempts %d, modify failures %d, closes %d, close failures %d, Close By %d, STOP_THROUGH %d",
+      "exec summary: modify attempts %d, modify failures %d, closes %d, close failures %d, Close By %d, STOP_THROUGH %d, log lines written %d, duplicates suppressed %d",
       g_stats.modifyAttempts, g_stats.modifyFailures,
       g_stats.closeAttempts, g_stats.closeFailures,
-      g_stats.closeByCount, g_stats.stopThrough);
+      g_stats.closeByCount, g_stats.stopThrough,
+      (int)g_logLinesWritten, (int)g_logDupSuppressed);
    Print("TwinPulse | ", execSummary);
    TP_LogInfo(execSummary);
+
+   //--- flush and close every log file handle -------------------------
+   TP_LogFilesClose();
   }
 
 //+------------------------------------------------------------------+
@@ -4006,6 +4160,9 @@ void OnTick()
 void OnTimer()
   {
    if(!g_initialised) return;
+
+   //--- push the log buffers to disk, at most once per 60 s -----------
+   TP_LogFilesFlush();
 
    TP_Risk_UpdateSpreadSample();
    TP_Risk_UpdateDayEquity();

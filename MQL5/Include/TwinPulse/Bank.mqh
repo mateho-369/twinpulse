@@ -106,8 +106,11 @@ bool TP_Bank_TryShred(void)
       double fullSpread  = TP_PriceToMoney(g_symbol, vol, spread);
       if(!TP_Bank_CanShred(g_tp.bank, fullLoss, fullSpread))
         {
-         TP_LogInfo(StringFormat("Shred skipped on %s: bank %.2f does not cover the full leg loss %.2f",
-                                 TP_LegName(leg), g_tp.bank, TP_Bank_ShredCost(fullLoss, fullSpread)));
+         //--- the timer tries again every second: the same block reason
+         //--- is logged once until the leg state changes -------------
+         if(TP_DedupShouldLog(g_tp.legs[leg].lastReason, "shred skipped: bank does not cover the full leg loss"))
+            TP_LogInfo(StringFormat("Shred skipped on %s: bank %.2f does not cover the full leg loss %.2f",
+                                    TP_LegName(leg), g_tp.bank, TP_Bank_ShredCost(fullLoss, fullSpread)));
          return false;
         }
      }
@@ -143,6 +146,7 @@ bool TP_Bank_TryShred(void)
 
    TP_LogInfo(StringFormat("Shred done on %s: realised %.2f, bank %.2f -> %.2f, shredded total %.2f",
                            TP_LegName(leg), realised, bankBefore, g_tp.bank, g_tp.cycleShredded));
+   g_tp.legs[leg].lastReason = "";   // the state changed, a later block logs again
    TP_State_Save();
    return true;
   }

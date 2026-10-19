@@ -520,6 +520,30 @@ void Test_FileRoundTrip(void)
   }
 
 //+------------------------------------------------------------------+
+//| Test 12 - log de-duplication (the timer must not flood the logs)   |
+//+------------------------------------------------------------------+
+void Test_Dedup(void)
+  {
+   Print("--- log de-duplication ---");
+   string last = "";
+   long before = g_logDupSuppressed;
+
+   TP_Check("the first reason is logged", TP_DedupShouldLog(last, "session filter"));
+   TP_Check("the same reason twice is logged once", !TP_DedupShouldLog(last, "session filter"));
+   TP_Check("the same reason three times is still suppressed", !TP_DedupShouldLog(last, "session filter"));
+   TP_Check("a changed reason is logged again", TP_DedupShouldLog(last, "spread too high"));
+   TP_Check("and its repeats are suppressed again", !TP_DedupShouldLog(last, "spread too high"));
+   TP_Check("switching back to the first reason logs it again", TP_DedupShouldLog(last, "session filter"));
+   TP_CheckEq("suppressed duplicates are counted", (double)(g_logDupSuppressed - before), 3.0, 1e-8);
+
+   //--- the per-leg "last reason" behaves the same and resets --------
+   string perLeg = "not re-opened: cooldown";
+   TP_Check("another key chain is independent", TP_DedupShouldLog(perLeg, "shred skipped: bank does not cover"));
+   perLeg = "";   // the leg state changed (opened / closed / shredded)
+   TP_Check("a cleared reason logs again after a state change", TP_DedupShouldLog(perLeg, "shred skipped: bank does not cover"));
+  }
+
+//+------------------------------------------------------------------+
 //| OnStart - run every test                                          |
 //+------------------------------------------------------------------+
 void OnStart()
@@ -542,6 +566,7 @@ void OnStart()
    Test_Median();
    Test_StopClamp();
    Test_FileRoundTrip();
+   Test_Dedup();
 
    Print("=====================================================");
    Print(StringFormat("  self test finished: %d passed, %d failed", g_passed, g_failed));

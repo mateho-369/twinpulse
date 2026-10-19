@@ -186,6 +186,10 @@ bool TP_Risk_MarginLevelOK(void)
    return (level >= MinMarginLevelPct);
   }
 
+//--- log de-dup: the cap warning repeats every timer tick while the
+//--- opens are blocked, it is logged once per state ------------------
+string g_lastVolumeBlock = "";
+
 //+------------------------------------------------------------------+
 //| TP_Risk_VolumeOK - the total volume must stay below the cap      |
 //+------------------------------------------------------------------+
@@ -194,9 +198,11 @@ bool TP_Risk_VolumeOK(const double extraVolume)
    double total = TP_State_TotalVolume() + extraVolume;
    if(total > MaxTotalLots + 1e-8)
      {
-      TP_LogWarn(StringFormat("MaxTotalLots reached: %.2f of %.2f lots.", total, MaxTotalLots));
+      if(TP_DedupShouldLog(g_lastVolumeBlock, "max total lots"))
+         TP_LogWarn(StringFormat("MaxTotalLots reached: %.2f of %.2f lots.", total, MaxTotalLots));
       return false;
      }
+   g_lastVolumeBlock = "";   // the cap is free again, a later block logs again
    return true;
   }
 

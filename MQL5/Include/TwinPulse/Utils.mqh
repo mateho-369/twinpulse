@@ -111,6 +111,25 @@ long TP_StopMinPoints(const long stopsLevelPts, const long freezeLevelPts)
   }
 
 //+------------------------------------------------------------------+
+//| Log de-duplication (pure) + log counters for the OnDeinit summary  |
+//+------------------------------------------------------------------+
+long g_logLinesWritten  = 0;   // every line written to a log / CSV file
+long g_logDupSuppressed = 0;   // duplicate messages that were skipped
+
+//+------------------------------------------------------------------+
+//| TP_DedupShouldLog - true only when the reason changed (or is the   |
+//| first one): the same reason twice is logged once. The caller keeps |
+//| one "last reason" string per leg (or per message family) and       |
+//| clears it when the leg state changes, so a fresh state logs again. |
+//+------------------------------------------------------------------+
+bool TP_DedupShouldLog(string &lastReason, const string reason)
+  {
+   if(reason == lastReason) { g_logDupSuppressed++; return false; }
+   lastReason = reason;
+   return true;
+  }
+
+//+------------------------------------------------------------------+
 //| TP_StopMinDistance - minimum distance between the market and a    |
 //| stop level in price units: max(stops, freeze, 1) x point          |
 //+------------------------------------------------------------------+

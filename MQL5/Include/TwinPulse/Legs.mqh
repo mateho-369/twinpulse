@@ -24,6 +24,10 @@ void TP_Legs_CloseCycle(const string reason);
 double TP_Legs_TargetDistance(const int legIndex);
 bool   TP_Legs_RebalanceCondition(const bool sideMissing, const double survivorPnl, const double tolerance);
 
+//--- log de-dup: the "Cycle start aborted" warning repeats every timer
+//--- tick while the opens are blocked, it is logged once per state ---
+string g_cycleStartBlock = "";
+
 //+------------------------------------------------------------------+
 //| TP_Legs_CostFloorOf - pure cost floor calculation                  |
 //+------------------------------------------------------------------+
@@ -244,7 +248,8 @@ bool TP_Legs_OpenOne(const int legIndex, const bool isReopen)
    string reason = "";
    if(!TP_Risk_AllowsOpen(lot, reason))
      {
-      TP_LogInfo(StringFormat("%s not opened: %s", TP_LegName(legIndex), reason));
+      if(TP_DedupShouldLog(g_tp.legs[legIndex].lastReason, "not opened: " + reason))
+         TP_LogInfo(StringFormat("%s not opened: %s", TP_LegName(legIndex), reason));
       return false;
      }
 
@@ -256,7 +261,8 @@ bool TP_Legs_OpenOne(const int legIndex, const bool isReopen)
    double stopDist = TP_Legs_StopDistance();
    if(stopDist <= 0.0)
      {
-      TP_LogWarn(StringFormat("%s not opened: no ATR for the stop loss.", TP_LegName(legIndex)));
+      if(TP_DedupShouldLog(g_tp.legs[legIndex].lastReason, "not opened: no ATR"))
+         TP_LogWarn(StringFormat("%s not opened: no ATR for the stop loss.", TP_LegName(legIndex)));
       return false;
      }
 
@@ -283,6 +289,7 @@ bool TP_Legs_OpenOne(const int legIndex, const bool isReopen)
    g_tp.legs[legIndex].lastModify    = 0;
    g_tp.legs[legIndex].modifyFails   = 0;
    g_tp.legs[legIndex].modifyBackoff = 0;
+   g_tp.legs[legIndex].lastReason    = "";   // a new state may log again
    return true;
   }
 
@@ -300,6 +307,7 @@ void TP_Legs_RegisterClose(const int legIndex, const string reason, const double
 
    g_tp.closedLegs++;
    g_tp.legs[legIndex].wasOpen = false;
+   g_tp.legs[legIndex].lastReason = "";   // the state changed, a block may log again
 
    TP_LogLegCSV(legIndex, g_tp.cycleId, g_tp.legs[legIndex].volume,
                 g_tp.legs[legIndex].openPrice, price, delta, reason,
@@ -616,10 +624,12 @@ void TP_Legs_TryStartCycle(void)
 
    if(opened == 0)
      {
-      TP_LogWarn("Cycle start aborted, no leg could be opened.");
+      if(TP_DedupShouldLog(g_cycleStartBlock, "cycle start aborted"))
+         TP_LogWarn("Cycle start aborted, no leg could be opened.");
       g_tp.cycleId--;
       return;
      }
+   g_cycleStartBlock = "";   // a real cycle started, a later abort logs again
 
    TP_LogInfo(StringFormat("Cycle %d started: %d legs, regime %s, ATR5 %.3f, spread %.3f",
                            g_tp.cycleId, opened, TP_RegimeName(regime),
@@ -648,13 +658,22 @@ void TP_Legs_TryRebalance(void)
       string reason = "";
       if(!TP_Legs_ReopenAllowed(i, reason))
         {
-         TP_LogInfo(StringFormat("%s not re-opened: %s", TP_LegName(i), reason));
+         //--- the same block reason every second is logged once, the
+         //--- text is only re-logged when the reason changes ---------
+         string key = reason;
+         int cut = StringFind(key, " P/L");   // the P/L numbers change every tick
+         if(cut > 0) key = StringSubstr(key, 0, cut);
+         if(TP_DedupShouldLog(g_tp.legs[i].lastReason, "not re-opened: " + key))
+            TP_LogInfo(StringFormat("%s not re-opened: %s", TP_LegName(i), reason));
          continue;
         }
 
-      TP_LogInfo(StringFormat("%s is re-opened to balance the cycle.", TP_LegName(i)));
-      TP_Legs_OpenOne(i, true);
+      //--- a failed open retries every second: the attempt line is only
+      //--- logged when the leg really comes back ---------------------
+      bool reopened = TP_Legs_OpenOne(i, true);
       TP_State_SyncPositions();
+      if(reopened)
+         TP_LogInfo(StringFormat("%s is re-opened to balance the cycle.", TP_LegName(i)));
      }
   }
 

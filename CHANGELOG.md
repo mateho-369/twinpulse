@@ -68,6 +68,21 @@ The format follows `Keep a Changelog`, the project uses semantic versioning.
   stops-level check of `TP_Exec_OpenLeg` and the never-widen /
   nothing-to-do checks of `TP_Exec_ModifySL`. A 1e-12 difference can
   never flip one of these decisions again.
+* Logging performance (a 2-month real-tick backtest went from ~3 minutes
+  to 84): every log line did a full `FileOpen` -> `FileSize` -> `FileSeek`
+  -> write -> `FileClose` cycle (hundreds of thousands of open/close per
+  run) and the timer re-logged unchanged block reasons every second. Now
+  every file keeps **one open handle** (`TP_LogFilesOpen` in `OnInit`,
+  `FileWriteString`, `TP_LogFilesClose` in `OnDeinit`), `FileFlush` runs
+  at most once per 60 s (plus once on close), the size rotation is
+  checked at most once per minute, and repeating timer messages are
+  logged **once per state change** (`TP_DedupShouldLog` with one
+  `lastReason` string per leg: "not re-opened", "not opened",
+  "Shred skipped", "MaxTotalLots reached", "Cycle start aborted",
+  free margin / OrderSend errors). In the Strategy Tester the INFO level
+  is no longer printed to the journal (WARN / ERROR are), the legs /
+  cycles CSV logs stay on. The OnDeinit summary counts the written log
+  lines and the suppressed duplicates.
 * `FILE_COMMON` was passed as the **4th** `FileOpen` argument (the codepage!)
   instead of OR-ed into `open_flags` in `TwinPulseNewsExport.mq5`,
   `Logger.mqh` and `News.mqh`: the signature is

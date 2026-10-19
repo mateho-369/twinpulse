@@ -72,6 +72,9 @@ int OnInit()
    g_trade.SetTypeFillingBySymbol(g_symbol);
    g_trade.SetAsyncMode(false);
 
+   //--- one open file handle per log file (closed in OnDeinit) ---------
+   TP_LogFilesOpen();
+
    //--- state ---------------------------------------------------------
    TP_State_Init();
    TP_State_Load();
@@ -176,12 +179,16 @@ void OnDeinit(const int reason)
    //--- execution counters: the smoke test proof for the stop / close -
    //--- fixes. Print() so the lines land in the tester journal.       --
    string execSummary = StringFormat(
-      "exec summary: modify attempts %d, modify failures %d, closes %d, close failures %d, Close By %d, STOP_THROUGH %d",
+      "exec summary: modify attempts %d, modify failures %d, closes %d, close failures %d, Close By %d, STOP_THROUGH %d, log lines written %d, duplicates suppressed %d",
       g_stats.modifyAttempts, g_stats.modifyFailures,
       g_stats.closeAttempts, g_stats.closeFailures,
-      g_stats.closeByCount, g_stats.stopThrough);
+      g_stats.closeByCount, g_stats.stopThrough,
+      (int)g_logLinesWritten, (int)g_logDupSuppressed);
    Print("TwinPulse | ", execSummary);
    TP_LogInfo(execSummary);
+
+   //--- flush and close every log file handle -------------------------
+   TP_LogFilesClose();
   }
 
 //+------------------------------------------------------------------+
@@ -243,6 +250,9 @@ void OnTick()
 void OnTimer()
   {
    if(!g_initialised) return;
+
+   //--- push the log buffers to disk, at most once per 60 s -----------
+   TP_LogFilesFlush();
 
    TP_Risk_UpdateSpreadSample();
    TP_Risk_UpdateDayEquity();

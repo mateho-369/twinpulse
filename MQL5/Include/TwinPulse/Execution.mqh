@@ -109,6 +109,11 @@ bool TP_Exec_Fatal(const uint retcode)
    return false;
   }
 
+//--- log de-dup: a failing open retries every timer tick, the same
+//--- block reason / send error is logged once per state --------------
+string g_lastSendBlock = "";   // TP_Exec_SendRequest errors
+string g_lastOpenBlock = "";   // open path blocks (margin, ATR, tick)
+
 //+------------------------------------------------------------------+
 //| TP_Exec_SendRequest - OrderCheck + OrderSend with retries         |
 //+------------------------------------------------------------------+
@@ -128,7 +133,8 @@ bool TP_Exec_SendRequest(MqlTradeRequest &request, MqlTradeResult &result, const
          if(chk == 0) chk = (uint)GetLastError();
          if(!TP_Exec_Retriable(chk))
            {
-            TP_LogError(StringFormat("%s failed in OrderCheck, code %u", what, chk));
+            if(TP_DedupShouldLog(g_lastSendBlock, StringFormat("send:%s:%u", what, chk)))
+               TP_LogError(StringFormat("%s failed in OrderCheck, code %u", what, chk));
             return false;
            }
         }
@@ -141,7 +147,8 @@ bool TP_Exec_SendRequest(MqlTradeRequest &request, MqlTradeResult &result, const
          if(rc == 0) rc = (uint)GetLastError();
          if(!TP_Exec_Retriable(rc))
            {
-            TP_LogError(StringFormat("%s failed: %u (%s)", what, rc, result.comment));
+            if(TP_DedupShouldLog(g_lastSendBlock, StringFormat("send:%s:%u", what, rc)))
+               TP_LogError(StringFormat("%s failed: %u (%s)", what, rc, result.comment));
             return false;
            }
         }
@@ -149,7 +156,10 @@ bool TP_Exec_SendRequest(MqlTradeRequest &request, MqlTradeResult &result, const
         {
          uint rc = result.retcode;
          if(rc == 0 || rc == TRADE_RETCODE_DONE || rc == TRADE_RETCODE_DONE_PARTIAL || rc == TRADE_RETCODE_PLACED)
+           {
+            g_lastSendBlock = "";   // a working request may fail and log again
             return true;
+           }
 
          if(rc == TRADE_RETCODE_INVALID_FILL)
            {
@@ -160,7 +170,8 @@ bool TP_Exec_SendRequest(MqlTradeRequest &request, MqlTradeResult &result, const
                request.type_filling = ORDER_FILLING_RETURN;
             else
               {
-               TP_LogError(StringFormat("%s: fill required and no alternative filling mode.", what));
+               if(TP_DedupShouldLog(g_lastSendBlock, StringFormat("send:%s:fill", what)))
+                  TP_LogError(StringFormat("%s: fill required and no alternative filling mode.", what));
                return false;
               }
             continue;
@@ -172,14 +183,16 @@ bool TP_Exec_SendRequest(MqlTradeRequest &request, MqlTradeResult &result, const
             continue;
            }
 
-         TP_LogError(StringFormat("%s failed: %u (%s)", what, rc, result.comment));
+         if(TP_DedupShouldLog(g_lastSendBlock, StringFormat("send:%s:%u", what, rc)))
+            TP_LogError(StringFormat("%s failed: %u (%s)", what, rc, result.comment));
          return false;
         }
 
       Sleep(150);
      }
 
-   TP_LogError(StringFormat("%s failed after %d attempts.", what, attempts));
+   if(TP_DedupShouldLog(g_lastSendBlock, StringFormat("send:%s:retries", what)))
+      TP_LogError(StringFormat("%s failed after %d attempts.", what, attempts));
    return false;
   }
 
@@ -191,15 +204,18 @@ bool TP_Exec_FreeMarginOk(const ENUM_ORDER_TYPE orderType, const double volume, 
    double margin = 0.0;
    if(!OrderCalcMargin(orderType, g_symbol, volume, price, margin))
      {
-      TP_LogWarn("OrderCalcMargin failed, the order is not sent.");
+      if(TP_DedupShouldLog(g_lastOpenBlock, "open: margin calc failed"))
+         TP_LogWarn("OrderCalcMargin failed, the order is not sent.");
       return false;
      }
    double free = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
    if(margin > free)
      {
-      TP_LogWarn(StringFormat("Not enough free margin: need %.2f, free %.2f.", margin, free));
+      if(TP_DedupShouldLog(g_lastOpenBlock, "open: not enough free margin"))
+         TP_LogWarn(StringFormat("Not enough free margin: need %.2f, free %.2f.", margin, free));
       return false;
      }
+   g_lastOpenBlock = "";   // the margin is fine again, a later block logs again
    return true;
   }
 
@@ -211,7 +227,8 @@ bool TP_Exec_OpenLeg(const int legIndex, const double volume, const double sl, c
    MqlTick tick;
    if(!SymbolInfoTick(g_symbol, tick))
      {
-      TP_LogError("SymbolInfoTick failed, cannot open a leg.");
+      if(TP_DedupShouldLog(g_lastOpenBlock, "open: symbol tick failed"))
+         TP_LogError("SymbolInfoTick failed, cannot open a leg.");
       return false;
      }
 
@@ -260,7 +277,8 @@ bool TP_Exec_OpenLeg(const int legIndex, const double volume, const double sl, c
      {
       if(g_tp.atr5 <= 0.0)
         {
-         TP_LogError("No ATR available, the leg is not opened without a stop loss.");
+         if(TP_DedupShouldLog(g_lastOpenBlock, "open: no ATR"))
+            TP_LogError("No ATR available, the leg is not opened without a stop loss.");
          return false;
         }
       double dist = HardSL_ATR * g_tp.atr5;
@@ -279,6 +297,7 @@ bool TP_Exec_OpenLeg(const int legIndex, const double volume, const double sl, c
    TP_LogInfo(StringFormat("%s OK: %s %.2f @ %s (deal %I64u)",
                            what, isBuy ? "BUY" : "SELL", volume,
                            TP_Str(price, g_digits), result.deal));
+   g_lastOpenBlock = "";   // a real open, a later block logs again
    return true;
   }
 
