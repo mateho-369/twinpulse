@@ -54,6 +54,7 @@ conservative** option was taken.
 | DC-0046 | Cycle id | A counter that is increased for every new cycle and stored in a global variable, the highest id found in the open positions wins after a restart | the specification asks for one cycle id per cycle |
 | DC-0047 | Swap display | The panel shows the estimated nightly cost of the open positions (`SYMBOL_SWAP_LONG` / `SYMBOL_SWAP_SHORT` x volume) | the specification asks for the swap estimate on the panel |
 | DC-0048 | The `used` flag of a leg | A leg that was never opened in the running cycle is never re-opened | otherwise a cycle could grow beyond 4 legs |
+| DC-0049 | Filling fallback when no symbol flags are set | Use `ORDER_FILLING_RETURN` when `SYMBOL_FILLING_MODE` advertises neither FOK nor IOC; on `TRADE_RETCODE_INVALID_FILL`, retry only through the remaining documented modes and fail closed if no alternative remains | the owner explicitly requires RETURN as the fallback. MQL5 documents that RETURN is not permitted for Market Execution, so the broker may reject that fallback; the EA does not bypass or weaken that rejection |
 
 ## Open points for the owner
 

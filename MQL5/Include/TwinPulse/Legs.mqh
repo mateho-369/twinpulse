@@ -4,7 +4,8 @@
 //|  The heart of the EA: the four legs of a cycle, their targets,     |
 //|  the re-balance rule of the owner and the cycle level exits.       |
 //+------------------------------------------------------------------+
-#pragma once
+#ifndef TP_LEGS_MQH
+#define TP_LEGS_MQH
 
 #include "Config.mqh"
 #include "Utils.mqh"
@@ -51,6 +52,8 @@ double TP_Legs_TargetDistanceOf(const double atr, const double spread, const dou
    if(atr <= 0.0) return 0.0;
    double dist = isLegA ? (TargetA_ATR * atr) : (TargetB_ATR * atr);
    double floorDist = TP_Legs_CostFloorOf(spread, point);
+   // This is an exact maximum, not an equality gate: always preserve the
+   // cost floor rather than allowing a tolerance to place a target below it.
    if(dist < floorDist) dist = floorDist;
    return dist;
   }
@@ -105,7 +108,7 @@ double TP_Legs_ProfitDistance(const int legIndex)
 bool TP_Legs_RebalanceCondition(const bool sideMissing, const double survivorPnl, const double tolerance)
   {
    if(!sideMissing) return false;
-   return (survivorPnl >= -MathAbs(tolerance));
+   return TP_MoneyGE(survivorPnl, -MathAbs(tolerance));
   }
 
 //+------------------------------------------------------------------+
@@ -188,7 +191,7 @@ bool TP_Legs_ReopenAllowed(const int legIndex, string &reason)
    if(g_tp.legs[mirror].open)
      {
       double mtol = TP_ScaledUSD(RebalanceTolUSD, g_tp.legs[mirror].volume);
-      if(g_tp.legs[mirror].profit < -mtol)
+      if(!TP_MoneyGE(g_tp.legs[mirror].profit, -mtol))
         { reason = StringFormat("mirror %s P/L %.2f below tolerance %.2f",
                                 TP_LegName(mirror), g_tp.legs[mirror].profit, mtol); return false; }
      }
@@ -332,7 +335,7 @@ void TP_Legs_CloseWinner(const int legIndex)
       double combined = g_tp.legs[legIndex].profit + g_tp.legs[mirror].profit;
       double need = TP_ScaledUSD(MinBankUSD, v1);
 
-      if(MathAbs(v1 - v2) < 1e-8 && combined >= need)
+      if(MathAbs(v1 - v2) < 1e-8 && TP_MoneyGE(combined, need))
         {
          TP_LogInfo(StringFormat("Close By: %s and %s, combined %.2f >= %.2f",
                                  TP_LegName(legIndex), TP_LegName(mirror), combined, need));
@@ -437,7 +440,7 @@ void TP_Legs_Update(void)
 
       //--- time stop --------------------------------------------------
       int age = TP_Risk_LegAgeMinutes(i);
-      if(age > MaxLoserMinutes && g_tp.legs[i].profit < 0.0)
+      if(age > MaxLoserMinutes && !TP_MoneyGE(g_tp.legs[i].profit, 0.0))
         {
          if(!TP_Bank_TryShred())
            {
@@ -566,7 +569,7 @@ void TP_Legs_TryRebalance(void)
 
    int openBuy  = TP_State_CountOpenLegs(TP_SIDE_BUY);
    int openSell = TP_State_CountOpenLegs(TP_SIDE_SELL);
-   int wanted   = LegsPerSide;
+   int wanted   = g_legsPerSide;
 
    bool sideMissing = (openBuy < wanted) || (openSell < wanted);
    if(!sideMissing) return;
@@ -641,3 +644,5 @@ void TP_Legs_CloseCycle(const string reason)
    g_tp.closedLegs    = 0;
    TP_State_Save();
   }
+
+#endif // TP_LEGS_MQH

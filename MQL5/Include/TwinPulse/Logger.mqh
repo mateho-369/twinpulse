@@ -3,7 +3,8 @@
 //|  TwinPulse Hedge EA                                                 |
 //|  Console output + rotating text log in Common\Files                |
 //+------------------------------------------------------------------+
-#pragma once
+#ifndef TP_LOGGER_MQH
+#define TP_LOGGER_MQH
 
 #include "Config.mqh"
 #include "Utils.mqh"
@@ -28,7 +29,7 @@ void TP_LogFileWrite(const string line)
 
    if(FileSize(handle) > TP_LOG_MAX_BYTES)
      {
-      FileClose(handle);
+      FileClose((int)handle);
       FileDelete(TP_LOG_FILE, FILE_COMMON);
       handle = FileOpen(TP_LOG_FILE, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ, 0, FILE_COMMON);
       if(handle == INVALID_HANDLE) return;
@@ -37,7 +38,7 @@ void TP_LogFileWrite(const string line)
 
    FileSeek(handle, 0, SEEK_END);
    FileWriteString(handle, line + "\n");
-   FileClose(handle);
+   FileClose((int)handle);
   }
 
 //+------------------------------------------------------------------+
@@ -58,9 +59,9 @@ void TP_Log(const string level, const string message)
       return;
      }
 
-   string line = StringFormat("%s | %s | %s | %s | %s",
+   string line = StringFormat("%s | %s | %s | %d | %s",
                               TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS),
-                              level, g_symbol, g_magic, message);
+                              level, g_symbol, (int)g_magic, message);
    Print(line);
    TP_LogFileWrite(StringFormat("%s,%s,%s,%d,%s",
                                 TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS),
@@ -103,7 +104,7 @@ void TP_CsvAppend(const string fileName, const string header, const string line)
 
    FileSeek(handle, 0, SEEK_END);
    FileWriteString(handle, line + "\n");
-   FileClose(handle);
+   FileClose((int)handle);
   }
 
 //+------------------------------------------------------------------+
@@ -145,3 +146,5 @@ void TP_LogCycleCSV(const int cycleId, const datetime startTime, const datetime 
                 "time,cycle_id,start_time,end_time,regime,legs_opened,legs_closed,realized,bank,shredded,reason,spread,atr5",
                 line);
   }
+
+#endif // TP_LOGGER_MQH

@@ -3,7 +3,8 @@
 //|  TwinPulse Hedge EA                                                 |
 //|  Runtime state of the EA plus rebuild from the open positions.     |
 //+------------------------------------------------------------------+
-#pragma once
+#ifndef TP_STATE_MQH
+#define TP_STATE_MQH
 
 #include "Config.mqh"
 #include "Utils.mqh"
@@ -381,3 +382,5 @@ double TP_State_RealizedForPosition(const ulong positionId, const datetime fromT
 
    return sum;
   }
+
+#endif // TP_STATE_MQH

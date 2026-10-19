@@ -197,11 +197,21 @@ void Test_Bank(void)
    Print("--- bank and shred ---");
    TP_CheckEq("the shred cost is the loss plus the spread",
               TP_Bank_ShredCost(0.10, 0.20), 0.30, 1e-8);
+   TP_Check("money greater-or-equal accepts decimal equality",
+            TP_MoneyGE(0.30, 0.10 + 0.20));
+   TP_Check("money less-or-equal accepts decimal equality",
+            TP_MoneyLE(0.10 + 0.20, 0.30));
+   TP_Check("a sub-epsilon negative balance is treated as zero",
+            TP_MoneyGE(-TP_MONEY_EPSILON * 0.5, 0.0));
    TP_Check("a full bank can shred", TP_Bank_CanShred(0.30, 0.10, 0.20));
+   TP_Check("bank equality accepts the floating-point cost boundary",
+            TP_Bank_CanShred(0.30, 0.10, 0.20));
    TP_Check("a short bank cannot shred", !TP_Bank_CanShred(0.29, 0.10, 0.20));
    TP_Check("an empty bank cannot shred", !TP_Bank_CanShred(0.0, 0.10, 0.20));
    TP_CheckEq("the bank after the shred",
               TP_Bank_AfterShred(0.30, 0.10, 0.20), 0.0, 1e-8);
+   TP_Check("an exact bank boundary leaves exactly zero after shredding",
+            TP_Bank_AfterShred(0.30, 0.10, 0.20) == 0.0);
    TP_CheckEq("the thresholds scale with the volume",
               TP_ScaledUSD(0.10, 0.02), 0.20, 1e-8);
    TP_CheckEq("the thresholds scale with the volume, 4 legs",
@@ -220,6 +230,8 @@ void Test_Rebalance(void)
             TP_Legs_RebalanceCondition(true, -0.05, 0.10));
    TP_Check("a survivor exactly at the tolerance allows the re-open",
             TP_Legs_RebalanceCondition(true, -0.10, 0.10));
+   TP_Check("a survivor within money epsilon of the tolerance allows the re-open",
+            TP_Legs_RebalanceCondition(true, -0.10 - 5.0e-10, 0.10));
    TP_Check("a survivor below the tolerance blocks the re-open",
             !TP_Legs_RebalanceCondition(true, -0.11, 0.10));
    TP_Check("a survivor in profit allows the re-open",
@@ -248,8 +260,10 @@ void Test_TimeFilters(void)
    TP_Check("a Friday at 21:30 is blocked",
             !TP_Risk_SessionFilter(fridayLate, 0, 21, 21, 24, 20, false));
    TP_Check("Saturday is blocked", !TP_Risk_SessionFilter(saturday, 0, 21, 21, 24, 20, false));
-   TP_Check("the session start is respected",
-            !TP_Risk_SessionFilter(wednesday, 8, 21, 21, 24, 20, true));
+   TP_Check("the session start blocks a time before its boundary",
+            !TP_Risk_SessionFilter(wednesday, 13, 21, 21, 24, 20, true));
+   TP_Check("the session start boundary itself is allowed",
+            TP_Risk_SessionFilter(wednesday, 12, 21, 21, 24, 20, true));
   }
 
 //+------------------------------------------------------------------+
@@ -267,6 +281,9 @@ void Test_Comment(void)
             TP_ParseComment(TP_MakeComment(7, TP_LEG_BUY_A), cycleId, legIdx));
    TP_Check("the cycle id survives", cycleId == 7);
    TP_Check("the leg index survives", legIdx == TP_LEG_BUY_A);
+   TP_Check("cycle ids accept only decimal digits",
+            TP_IsDigits("26101701") && !TP_IsDigits("26x01701") &&
+            !TP_IsDigits("") && !TP_IsDigits("-7"));
    TP_Check("a foreign comment is rejected",
             !TP_ParseComment("OTHER|7|BUY_A", cycleId, legIdx));
    TP_Check("a broken comment is rejected",

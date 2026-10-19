@@ -41,6 +41,7 @@ int OnInit()
   {
    g_symbol = _Symbol;
    g_magic  = Magic;
+   g_legsPerSide = LegsPerSide;
 
    if(!SymbolSelect(g_symbol, true))
      {
@@ -62,8 +63,8 @@ int OnInit()
       Print("TwinPulse: LotMultiplier > 1.0 needs IUnderstandMartingaleRisk = true, the multiplier is reset to 1.0.");
       }
 
-   if(LegsPerSide < 1) LegsPerSide = 1;
-   if(LegsPerSide > 2) LegsPerSide = 2;
+   if(g_legsPerSide < 1) g_legsPerSide = 1;
+   if(g_legsPerSide > 2) g_legsPerSide = 2;
 
    //--- trade objects -------------------------------------------------
    g_trade.SetExpertMagicNumber((ulong)g_magic);
@@ -198,7 +199,7 @@ void OnTick()
    if(totalVolume > 0.0)
      {
       double target = TP_ScaledUSD(CycleTargetUSD, totalVolume);
-      if(target > 0.0 && TP_State_CycleTotal() >= target)
+      if(target > 0.0 && TP_MoneyGE(TP_State_CycleTotal(), target))
         {
          TP_LogInfo(StringFormat("Basket target reached: cycle total %.2f >= %.2f.",
                                  TP_State_CycleTotal(), target));
@@ -302,14 +303,25 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
   {
    if(!g_initialised) return;
    if(trans.symbol != g_symbol) return;
-   if(trans.magic != 0 && trans.magic != (ulong)g_magic) return;
 
    if(trans.type == TRADE_TRANSACTION_DEAL_ADD)
      {
+      if(trans.deal == 0 || !HistoryDealSelect(trans.deal)) return;
+      long dealMagic = HistoryDealGetInteger(trans.deal, DEAL_MAGIC);
+      if(dealMagic != g_magic) return;
+
       TP_LogInfo(StringFormat("Deal: order %I64u, deal %I64u, type %d, volume %.2f @ %s",
                               trans.order, trans.deal, (int)trans.type,
                               result.volume, TP_Str(result.price, g_digits)));
      }
+   else if(trans.type == TRADE_TRANSACTION_POSITION)
+     {
+      if(trans.position == 0 || !PositionSelectByTicket(trans.position)) return;
+      long positionMagic = PositionGetInteger(POSITION_MAGIC);
+      if(positionMagic != g_magic) return;
+     }
+   else
+      return;
 
    TP_State_SyncPositions();
   }
@@ -322,7 +334,7 @@ double OnTester()
    double trades = TesterStatistics(STAT_TRADES);
    double pf     = TesterStatistics(STAT_PROFIT_FACTOR);
    double rf     = TesterStatistics(STAT_RECOVERY_FACTOR);
-   double dd     = TesterStatistics(STAT_EQUITY_DRAWDOWN_PERCENT);
+   double dd     = TesterStatistics(STAT_EQUITY_DDREL_PERCENT);
 
    if(trades < 200.0 || dd > 25.0)
       return 0.0;

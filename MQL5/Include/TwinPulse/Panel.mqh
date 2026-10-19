@@ -3,7 +3,8 @@
 //|  TwinPulse Hedge EA                                                 |
 //|  On chart panel with the state of the EA, the legs and the brakes. |
 //+------------------------------------------------------------------+
-#pragma once
+#ifndef TP_PANEL_MQH
+#define TP_PANEL_MQH
 
 #include "Config.mqh"
 #include "Utils.mqh"
@@ -142,3 +143,5 @@ void TP_Panel_Update(void)
 
    ChartRedraw(0);
   }
+
+#endif // TP_PANEL_MQH

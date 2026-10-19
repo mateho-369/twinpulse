@@ -22,7 +22,6 @@ INC = os.path.join(ROOT, "MQL5", "Include")
 OUT = os.path.join(ROOT, "dist", "TwinPulse_single.mq5")
 
 INCLUDE_RE = re.compile(r'^\s*#include\s+([<"])([^>"]+)[>"]')
-PRAGMA_RE = re.compile(r'^\s*#pragma\s+once\s*$')
 
 
 def resolve(path, base_dir=None):
@@ -53,7 +52,7 @@ def inline(text, seen, out, base_dir=None):
             continue
 
         if target in seen:
-            out.append("// (already inlined) #include %s%s%s" % (quote, path, quote))
+            out.append("// (already inlined) project header: %s" % path)
             continue
 
         seen.add(target)
@@ -61,7 +60,6 @@ def inline(text, seen, out, base_dir=None):
         out.append("//+--- begin %s " % rel + "-" * max(0, 60 - len(rel)))
         with open(target, "r", encoding="utf-8") as handle:
             body = handle.read()
-        body = "\n".join(l for l in body.splitlines() if not PRAGMA_RE.match(l))
         inline(body, seen, out, os.path.dirname(target))
         out.append("//+--- end %s " % rel + "-" * max(0, 60 - len(rel)))
 
@@ -101,10 +99,10 @@ def main():
     active = [l for l in written.splitlines() if not l.lstrip().startswith("//")]
     active_text = "\n".join(active)
 
-    if "#include <TwinPulse/" in active_text:
+    if re.search(r'^\s*#include\s+[<"](?:TwinPulse/|TwinPulse\\)', active_text, re.MULTILINE):
         problems.append("a project include was not inlined")
-    if "#pragma once" in written:
-        problems.append("a #pragma once survived the inlining")
+    if re.search(r'^\s*#pragma\b', active_text, re.MULTILINE):
+        problems.append("an unsupported or unexpected #pragma survived inlining")
     for line in active:
         match = INCLUDE_RE.match(line)
         if match and resolve(match.group(2)) is not None:
@@ -119,7 +117,7 @@ def main():
         for problem in problems:
             print("PROBLEM: %s" % problem)
         return 1
-    print("check: no project include and no #pragma once left, OK")
+    print("check: no project includes or unsupported pragmas left, OK")
     return 0
 
 

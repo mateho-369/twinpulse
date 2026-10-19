@@ -5,12 +5,13 @@
 //|  Everything in here is side effect free so the self test can use  |
 //|  it on synthetic data.                                             |
 //+------------------------------------------------------------------+
-#pragma once
+#ifndef TP_UTILS_MQH
+#define TP_UTILS_MQH
 
-#include <Trade/Trade.mqh>
-#include <Trade/PositionInfo.mqh>
-#include <Trade/SymbolInfo.mqh>
-#include <Trade/AccountInfo.mqh>
+#include <Trade\Trade.mqh>
+#include <Trade\PositionInfo.mqh>
+#include <Trade\SymbolInfo.mqh>
+#include <Trade\AccountInfo.mqh>
 
 //--- shared terminal objects (one EA instance per symbol / magic) -----
 CTrade       g_trade;
@@ -21,6 +22,7 @@ CAccountInfo g_acc;
 //--- EA wide identifiers ----------------------------------------------
 string g_symbol = "";
 long   g_magic  = TP_MAGIC_DEFAULT;
+int    g_legsPerSide = 2;
 int    g_digits = 3;
 double g_point  = 0.001;
 
@@ -41,6 +43,24 @@ double TP_SafeDiv(const double num, const double den, const double fallback)
   {
    if(MathAbs(den) < 1e-12) return fallback;
    return num / den;
+  }
+
+//+------------------------------------------------------------------+
+//| Money comparisons with a tiny binary floating-point tolerance    |
+//+------------------------------------------------------------------+
+bool TP_MoneyGE(const double value, const double threshold)
+  {
+   return (value >= threshold || MathAbs(value - threshold) <= TP_MONEY_EPSILON);
+  }
+
+bool TP_MoneyLE(const double value, const double threshold)
+  {
+   return (value <= threshold || MathAbs(value - threshold) <= TP_MONEY_EPSILON);
+  }
+
+bool TP_MoneyNearZero(const double value)
+  {
+   return (MathAbs(value) <= TP_MONEY_EPSILON);
   }
 
 //+------------------------------------------------------------------+
@@ -257,6 +277,21 @@ string TP_MakeComment(const int cycleId, const int legIndex)
   }
 
 //+------------------------------------------------------------------+
+//| TP_IsDigits - true when a string contains one or more decimal digits|
+//+------------------------------------------------------------------+
+bool TP_IsDigits(const string text)
+  {
+   int length = StringLen(text);
+   if(length <= 0) return false;
+   for(int i = 0; i < length; i++)
+     {
+      ushort ch = StringGetCharacter(text, i);
+      if(ch < '0' || ch > '9') return false;
+     }
+   return true;
+  }
+
+//+------------------------------------------------------------------+
 //| TP_ParseComment - read cycle id and leg index from a comment       |
 //+------------------------------------------------------------------+
 bool TP_ParseComment(const string comment, int &cycleId, int &legIndex)
@@ -273,10 +308,10 @@ bool TP_ParseComment(const string comment, int &cycleId, int &legIndex)
    string cycStr = StringSubstr(rest, 0, sep);
    string legStr = StringSubstr(rest, sep + 1);
 
-   if(!StringIsInteger(cycStr)) return false;
+   if(!TP_IsDigits(cycStr)) return false;
    legIndex = TP_LegIndexFromName(legStr);
    if(legIndex < 0) return false;
-   cycleId = StringToInteger(cycStr);
+   cycleId = (int)StringToInteger(cycStr);
    return true;
   }
 
@@ -287,7 +322,7 @@ int TP_DayStamp(const datetime t)
   {
    MqlDateTime dt;
    TimeToStruct(t, dt);
-   return dt.year * 10000 + dt.month * 100 + dt.day;
+   return dt.year * 10000 + dt.mon * 100 + dt.day;
   }
 
 //+------------------------------------------------------------------+
@@ -355,3 +390,5 @@ bool TP_IsFriday(const datetime t)
   {
    return (TP_ServerDayOfWeek(t) == 5);
   }
+
+#endif // TP_UTILS_MQH
