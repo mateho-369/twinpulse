@@ -192,108 +192,177 @@ if($instOk) { Write-Host "[batch] .set files copied to $instSetDir as well" }
 #--- run the variants -----------------------------------------------------
 #--- /config is IGNORED while a terminal is already open: the new process -
 #--- only hands the command line to the running instance and exits with 0 -
-#--- (all 8 variants "succeed" in a second and write nothing). Refuse to  -
-#--- start in that state. --------------------------------------------------
+#--- (all variants "succeed" in a second and write nothing). Refuse to    -
+#--- start in that state. ------------------------------------------------
 $running = @(Get-Process -Name terminal64 -ErrorAction SilentlyContinue)
 if($running.Count -gt 0)
   {
    throw ("MetaTrader 5 is still running (PID {0}). Close the terminal completely (also the tray icon / background process) and run the batch again - /config does nothing while MT5 is open." -f (($running | ForEach-Object { $_.Id }) -join ", "))
   }
 
+#--- BACK and FORWARD are two SEPARATE tester runs ------------------------
+#--- A single run with ForwardMode=2 saves the BACKTEST report only (the ---
+#--- trade list of the saved report ends at the forward boundary while the -
+#--- CSVs go on), so the forward PF / DD / RF were never measured. Two ---
+#--- runs with ForwardMode=0 give a real report for each half. -----------
+#--- The forward run starts from a fresh deposit; with the fixed 0.01 lot -
+#--- PF and RF do not depend on the balance, and the forward DD% is ------
+#--- measured against the smaller fresh balance (more conservative). -----
+$d_from = [datetime]::ParseExact($FromDate, "yyyy.MM.dd", $null)
+$d_to   = [datetime]::ParseExact($ToDate,   "yyyy.MM.dd", $null)
+$span   = $d_to - $d_from
+$fwd_start = $d_from.AddDays([math]::Floor($span.TotalDays * 2.0 / 3.0))
+$back_to   = $fwd_start.AddDays(-1)
+$fwd_from  = $fwd_start
+Write-Host ("[batch] split: BACK {0} .. {1}   FORWARD {2} .. {3}" -f `
+            $d_from.ToString("yyyy.MM.dd"), $back_to.ToString("yyyy.MM.dd"), `
+            $fwd_from.ToString("yyyy.MM.dd"), $d_to.ToString("yyyy.MM.dd"))
+
 $index = 0
 foreach($v in $variants)
   {
    $index++
-   $n       = $v.name
-   $outDir  = Join-Path $reports $n
-   $reportH = Join-Path $outDir "report.htm"
-   $legsCsv = Join-Path $outDir "TwinPulse_legs.csv"
+   $n      = $v.name
+   $outDir = Join-Path $reports $n
+   New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
-   #--- resume: a finished variant is not run again ----------------------
-   if((Test-Path $reportH) -and (Test-Path $legsCsv))
+   $passes = @(
+       @{ tag = "back"; from = $d_from;   to = $back_to;
+          report = "report_back.htm"; legs = "TwinPulse_legs_back.csv" },
+       @{ tag = "fwd";  from = $fwd_from; to = $d_to;
+          report = "report_fwd.htm";  legs = "TwinPulse_legs_fwd.csv"  }
+   )
+
+   #--- resume: a variant whose two reports and two CSVs exist is done ----
+   $done = $true
+   foreach($pass in $passes)
+     {
+      if(!(Test-Path (Join-Path $outDir $pass.report)) -or
+         !(Test-Path (Join-Path $outDir $pass.legs))) { $done = $false }
+     }
+   if($done)
      {
       Write-Host ("[{0}/{1}] {2}: already done, skipped" -f $index, $variants.Count, $n)
       continue
      }
 
    Write-Host ("[{0}/{1}] {2}: {3}" -f $index, $variants.Count, $n, $v.desc)
-   New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
-   #--- archive the old TwinPulse*.csv of Common\Files -------------------
-   $archive = Join-Path $reports "_archive"
-   New-Item -ItemType Directory -Force -Path $archive | Out-Null
-   Get-ChildItem -Path $common -Filter "TwinPulse*.csv" -ErrorAction SilentlyContinue |
-     ForEach-Object {
-        $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
-        Move-Item $_.FullName (Join-Path $archive ("{0}_{1}_{2}" -f $n, $stamp, $_.Name)) -Force
-     }
-
-   #--- start the tester and wait for the exit --------------------------
-   $ini = Join-Path $localDir "$n.ini"
-   Write-Host "        terminal64.exe /config:$ini"
-   $t0 = Get-Date
-   $p = Start-Process -FilePath $terminal -ArgumentList "/config:`"$ini`"" -PassThru
-   $p.WaitForExit()
-   $secs = [int](((Get-Date) - $t0).TotalSeconds)
-   Write-Host ("        exit code {0} after {1} s" -f $p.ExitCode, $secs)
-
-   #--- the report: the tester writes it where `Report=` points (relative
-   #--- to the DATA folder). Collect whatever appeared in the last minutes
-   #--- from the variant folder and both reports roots, keep the newest as
-   #--- report.htm. ------------------------------------------------------
-   $cand = @()
-   $cand += @(Get-ChildItem -Path $outDir -Filter "*.htm*" -ErrorAction SilentlyContinue)
-   foreach($root in @((Join-Path $DataDir "reports"), (Join-Path $InstallDir "reports")))
+   foreach($pass in $passes)
      {
-      if(Test-Path $root)
+      $reportH = Join-Path $outDir $pass.report
+      $legsCsv = Join-Path $outDir $pass.legs
+      if((Test-Path $reportH) -and (Test-Path $legsCsv))
         {
-         $cand += @(Get-ChildItem -Path $root -Recurse -Filter "*.htm*" -ErrorAction SilentlyContinue |
-                    Where-Object { $_.LastWriteTime -ge $t0.AddMinutes(-1) })
+         Write-Host ("        {0}: already done, skipped" -f $pass.tag)
+         continue
         }
-     }
-   if($cand.Count -gt 0)
-     {
-      $rep = $cand | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-      if($rep.FullName -ne $reportH) { Copy-Item $rep.FullName $reportH -Force }
-     }
 
-   #--- fresh CSVs from Common\Files -------------------------------------
-   $csvs = @(Get-ChildItem -Path $common -Filter "TwinPulse*.csv" -ErrorAction SilentlyContinue)
-   foreach($c in $csvs) { Copy-Item $c.FullName $outDir -Force }
+      #--- archive the old TwinPulse*.csv of Common\Files -----------------
+      $archive = Join-Path $reports "_archive"
+      New-Item -ItemType Directory -Force -Path $archive | Out-Null
+      Get-ChildItem -Path $common -Filter "TwinPulse*.csv" -ErrorAction SilentlyContinue |
+        ForEach-Object {
+           $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
+           Move-Item $_.FullName (Join-Path $archive ("{0}_{1}_{2}_{3}" -f $n, $pass.tag, $stamp, $_.Name)) -Force
+        }
 
-   #--- a variant that produced no report did NOT run: say it loudly -----
-   if(!(Test-Path $reportH))
-     {
-      Write-Host ("        ERROR: {0} produced NO report ({1})." -f $n, ("exit {0} after {1} s" -f $p.ExitCode, $secs))
-      Write-Host "        Last lines of the newest tester / terminal log:"
-      $logs = @()
-      foreach($root in @((Join-Path $DataDir "logs"), (Join-Path $DataDir "Tester")))
+      #--- the run .ini for this pass -------------------------------------
+      $tag = $pass.tag
+      $ini = Join-Path $localDir ("{0}_{1}.ini" -f $n, $tag)
+      $txt = @"
+; ==========================================================================
+;  TwinPulse Hedge EA - decision batch ${n} (${tag} pass)
+;  Generated by tools/run_batch.ps1. Model 4 = every tick based on real
+;  ticks, ForwardMode 0 = one plain run (the two halves are separate runs
+;  so that BOTH have a saved tester report).
+; ==========================================================================
+[Tester]
+Expert=TwinPulse\TwinPulse
+ExpertParameters=$n.set
+Symbol=$Symbol
+Period=M5
+Model=4
+ExecutionMode=150
+Deposit=$Deposit
+Currency=USD
+Leverage=1:500
+FromDate=$($pass.from.ToString("yyyy.MM.dd"))
+ToDate=$($pass.to.ToString("yyyy.MM.dd"))
+ForwardMode=0
+Report=reports\decision\$n\$($pass.tag)_report_tmp
+ReplaceReport=1
+ShutdownTerminal=1
+Visual=0
+"@
+      Set-Content -Path $ini -Value $txt -Encoding ASCII
+
+      Write-Host ("        {0}: {1} .. {2}" -f $tag, $pass.from.ToString("yyyy.MM.dd"), $pass.to.ToString("yyyy.MM.dd"))
+      Write-Host "        terminal64.exe /config:$ini"
+      $t0 = Get-Date
+      $p = Start-Process -FilePath $terminal -ArgumentList "/config:`"$ini`"" -PassThru
+      $p.WaitForExit()
+      $secs = [int](((Get-Date) - $t0).TotalSeconds)
+      Write-Host ("        exit code {0} after {1} s" -f $p.ExitCode, $secs)
+
+      #--- the report: the tester writes it where `Report=` points (relative
+      #--- to the DATA folder). Collect what appeared in the last minutes from
+      #--- the variant folder and both reports roots, keep the newest. ------
+      $cand = @()
+      $cand += @(Get-ChildItem -Path $outDir -Filter "*.htm*" -ErrorAction SilentlyContinue |
+                 Where-Object { $_.Name -ne "report.htm" -and $_.Name -ne "report_back.htm" -and
+                                $_.Name -ne "report_fwd.htm" -and $_.LastWriteTime -ge $t0.AddMinutes(-1) })
+      foreach($root in @((Join-Path $DataDir "reports"), (Join-Path $InstallDir "reports")))
         {
          if(Test-Path $root)
            {
-            $logs += @(Get-ChildItem -Path $root -Recurse -Filter "*.log" -ErrorAction SilentlyContinue |
-                       Where-Object { $_.LastWriteTime -ge $t0.AddMinutes(-2) })
+            $cand += @(Get-ChildItem -Path $root -Recurse -Filter "*.htm*" -ErrorAction SilentlyContinue |
+                       Where-Object { $_.LastWriteTime -ge $t0.AddMinutes(-1) })
            }
         }
-      if($logs.Count -gt 0)
+      if($cand.Count -gt 0)
         {
-         $newest = $logs | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-         Write-Host ("        " + $newest.FullName)
-         Get-Content $newest.FullName -Tail 25 | ForEach-Object { Write-Host ("        | " + $_) }
+         $rep = $cand | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+         Copy-Item $rep.FullName $reportH -Force
         }
-      else
+
+      #--- fresh CSVs from Common\Files ------------------------------------
+      $csvs = @(Get-ChildItem -Path $common -Filter "TwinPulse*.csv" -ErrorAction SilentlyContinue)
+      foreach($c in $csvs) { Copy-Item $c.FullName (Join-Path $outDir $pass.legs) -Force }
+
+      if(!(Test-Path $reportH))
         {
-         Write-Host "        (no fresh log found: check that MetaTrader 5 was closed and that the"
-         Write-Host "         .set files exist in <DATA>\MQL5\Profiles\Tester)"
+         Write-Host ("        ERROR: {0} {1} produced NO report ({2})." -f $n, $tag, ("exit {0} after {1} s" -f $p.ExitCode, $secs))
+         Write-Host "        Last lines of the newest tester / terminal log:"
+         $logs = @()
+         foreach($root in @((Join-Path $DataDir "logs"), (Join-Path $DataDir "Tester")))
+           {
+            if(Test-Path $root)
+              {
+               $logs += @(Get-ChildItem -Path $root -Recurse -Filter "*.log" -ErrorAction SilentlyContinue |
+                          Where-Object { $_.LastWriteTime -ge $t0.AddMinutes(-2) })
+              }
+           }
+         if($logs.Count -gt 0)
+           {
+            $newest = $logs | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            Write-Host ("        " + $newest.FullName)
+            Get-Content $newest.FullName -Tail 25 | ForEach-Object { Write-Host ("        | " + $_) }
+           }
+         throw ("{0} {1} produced no report - fix the cause above and run the batch again (it is resume-safe)." -f $n, $tag)
         }
-      throw ("variant {0} produced no report - fix the cause above and run the batch again (it is resume-safe)." -f $n)
+
+      if($csvs.Count -eq 0)
+        {
+         Write-Host ("        WARNING: no TwinPulse*.csv in {0} - did the EA really run?" -f $common)
+        }
+      Write-Host ("        {0}: report + {1} CSV ok" -f $tag, $csvs.Count)
      }
 
-   if($csvs.Count -eq 0)
-     {
-      Write-Host ("        WARNING: no TwinPulse*.csv in {0} - did the EA really run?" -f $common)
-     }
-   Write-Host ("        report + {0} CSV copied to {1}" -f $csvs.Count, $outDir)
+   #--- keep the report file names tidy ----------------------------------
+   Get-ChildItem -Path $outDir -Filter "*_report_tmp*.htm*" -ErrorAction SilentlyContinue |
+     Remove-Item -Force -ErrorAction SilentlyContinue
+   Write-Host ("        done -> {0}" -f $outDir)
   }
 
 Write-Host "[batch] all variants processed."

@@ -257,11 +257,28 @@ powershell -ExecutionPolicy Bypass -File tools\run_batch.ps1 -Symbol XAUUSDm `
 powershell -ExecutionPolicy Bypass -File tools\run_batch.ps1
 ```
 
-Script នឹងបង្កើតឯកសារ `.ini` ទាំង ៨ ពីប៉ារ៉ាម៉ែត្រខាងលើ ចម្លងឯកសារ `.set`
-ទៅ `<DATA>\MQL5\Profiles\Tester\` និង `<INSTALL>\Profiles\Tester\` ហើយរត់
-terminal64.exe ម្តងមួយៗ (រង់ចាំមួយបញ្ចប់ទើបមួយទៀត)។ រាល់ variant:
-ផ្លាស់ទី `TwinPulse*.csv` ចាស់ពី `Common\Files` ទៅ `reports\decision\_archive\`
-សិន រួចចម្លងរបាយការណ៍ + CSV ថ្មីទៅ `reports\decision\<variant>\`។
+Script នឹងបង្កើតឯកសារ `.ini` ពីប៉ារ៉ាម៉ែត្រខាងលើ ចម្លងឯកសារ `.set`
+ទៅ `<DATA>\MQL5\Profiles\Tester\` (និង `<INSTALL>\Profiles\Tester\` បើអាច)
+ហើយរត់ terminal64.exe ម្តងមួយៗ។
+
+**សំខាន់ — variant មួយ = ២ run:** ព្រំដែន BACK / FORWARD ត្រូវបានបំបែកជា
+ពីរ run ដាច់ដោយឡែក (`back` និង `fwd`, ទាំងពីរ `ForwardMode=0`):
+
+| run | រយៈពេល | report | CSV |
+|---|---|---|---|
+| back | `FromDate` .. `floor(2/3)` | `report_back.htm` | `TwinPulse_legs_back.csv` |
+| fwd | ថ្ងៃបន្ទាប់ .. `ToDate` | `report_fwd.htm` | `TwinPulse_legs_fwd.csv` |
+
+ហេតុអ្វី? MT5 ជាមួយ `ForwardMode=2` រក្សាទុក **តែ report របស់ backtest**
+(report បញ្ចប់ត្រង់ព្រំដែន forward ខណៈ CSV បន្តដល់ចប់) ដូច្នេះ PF / DD / RF
+របស់ forward មិនធ្លាប់ត្រូវបានវាស់ឡើយ។ ការបំបែកជា ២ run ធ្វើឲ្យ **ទាំងពីរ
+ពាក់កណ្តាលមាន report ពិត**។ run របស់ forward ចាប់ផ្តើមពី deposit ថ្មី
+ដូចគ្នា ប៉ុន្តែជាមួយ lot ថេរ 0.01 នោះ PF និង RF មិនអាស្រ័យលើ balance ទេ
+ហើយ DD% របស់ forward ត្រូវវាស់លើ balance តូចជាង (អភិរក្សជាង)។
+
+រាល់ run: ផ្លាស់ទី `TwinPulse*.csv` ចាស់ពី `Common\Files` ទៅ
+`reports\decision\_archive\` សិន រួចចម្លង report + CSV ថ្មីទៅ
+`reports\decision\<variant>\`។
 
 **អាចបន្តវិញបាន (resume-safe):** បើរត់ជាប់គាំង ឬគ្រឿងថាមពលដាច់ ចាប់ផ្តើម
 script ដដែល - variant ដែលមានរបាយការណ៍រួចហើយនឹងត្រូវរំលង។

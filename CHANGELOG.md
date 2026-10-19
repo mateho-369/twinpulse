@@ -7,6 +7,28 @@ The format follows `Keep a Changelog`, the project uses semantic versioning.
 
 ### Fixed
 
+* **The forward half was never measured:** a tester run with `ForwardMode=2`
+  saves the BACKTEST report only - the trade list of the saved `report.htm`
+  ends at the forward boundary (V1: 2026.09.21 20:16) while the CSVs go on
+  to 2026.10.18. `summarize_batch.py` then filled the forward gates from a
+  single-column report (BACK PF == FWD PF) or printed `n/a`. The tester
+  report also cannot be read when it is UTF-16 (a NUL between every
+  character made every label unmatched, so every report field was `n/a`).
+  `tools/run_batch.ps1` now runs **backtest and forward as two separate
+  tester runs** per variant (`back` = `FromDate .. floor(2/3)`, `fwd` = the
+  rest, both `ForwardMode=0`), writes `report_back.htm` /
+  `report_fwd.htm` and `TwinPulse_legs_back.csv` / `TwinPulse_legs_fwd.csv`;
+  `summarize_batch.py` reads that layout (and still reads the old one),
+  decodes UTF-16 reports / CSVs, never copies a single column into the
+  forward side, and refuses to give a verdict when the history quality is
+  below 90% or the forward report is missing.
+* **`sum(pos_net)` vs the report net:** the check compared the whole CSV
+  (back + forward) with a backtest-only report, so 5 of 8 variants showed a
+  false `**MISMATCH**`. The check now uses only the rows the report covers
+  (up to its last trade) - on the owner batch all 8 variants then match to
+  the cent (V1 -283.47 = -283.47), which confirms the `pos_net`
+  accounting of the bank fix.
+
 * **The batch failed silently (first owner batch: every variant "exit code
   0" in a second, no report, no CSV - `SUMMARY.md` was written from an
   empty folder and even printed "STOP the hedge idea"):**

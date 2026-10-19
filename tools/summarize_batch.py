@@ -28,6 +28,7 @@
 
 import argparse
 import csv
+import io
 import os
 import re
 import sys
@@ -74,13 +75,36 @@ def strip_tags(html):
     return re.sub(r"<[^>]+>", " ", html)
 
 
+def read_text_file(path):
+    """read an MT5 file whatever encoding it uses.
+
+    The tester writes report.htm (and the CSVs of some builds) in UTF-16
+    with a BOM; reading those as UTF-8 leaves a NUL between every
+    character, so every label match fails and the whole report reads as
+    `n/a`. Decode by BOM, then try the usual code pages.
+    """
+    with open(path, "rb") as f:
+        raw = f.read()
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return raw.decode("utf-16", errors="replace")
+    if raw[:3] == b"\xef\xbb\xbf":
+        return raw.decode("utf-8-sig", errors="replace")
+    if raw[:2] == b"PK":
+        return ""
+    for enc in ("utf-8", "cp1252", "latin-1"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("latin-1", errors="replace")
+
+
 def parse_report(path):
     """extract the statistics rows of an MT5 tester report (tolerant)."""
-    out = {"history_quality": None, "rows": {}}
+    out = {"history_quality": None, "rows": {}, "last_trade": None}
     if not os.path.isfile(path):
         return out
-    with open(path, "r", encoding="utf-8", errors="replace") as f:
-        html = f.read()
+    html = read_text_file(path)
     rows = re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.S | re.I)
     for row in rows:
         cells = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, re.S | re.I)
@@ -88,7 +112,17 @@ def parse_report(path):
         cells = [c for c in cells if c != ""]
         if len(cells) < 2:
             continue
-        label = cells[0].strip().lower()
+        first = cells[0].strip()
+        if re.match(r"^\d{4}\.\d{2}\.\d{2} \d{2}:\d{2}", first):
+            # a trade row: remember the newest one (tells which period the
+            # saved report really covers - the forward pass is not in it)
+            try:
+                t = datetime.strptime(first[:19], "%Y.%m.%d %H:%M:%S")
+                if out["last_trade"] is None or t > out["last_trade"]:
+                    out["last_trade"] = t
+            except ValueError:
+                pass
+        label = first.lower()
         out["rows"].setdefault(label, []).append(cells[1:])
     for label, valuerows in out["rows"].items():
         if "history quality" in label:
@@ -115,15 +149,20 @@ def pick(report, *needles):
 
 def pick_pair(report, needles, pct=False):
     """-> (back, fwd): 3 cells = (all, back, fwd), 2 cells = (back, fwd),
-    1 cell = common section. pct=True reads the (x%) inside drawdown cells."""
+    1 cell = one single-column report -> (value, None).
+
+    A single-column report is NEVER copied into the forward side: the
+    tester writes the report of the backtest pass only, so duplicating the
+    value made BACK PF == FWD PF and a gate could have passed on a number
+    that was never measured forward."""
     vals, pcts = pick(report, *needles)
     use = vals
     if pct and any(p is not None for p in pcts):
         use = pcts
     if use[2] is None and use[1] is not None:
         return use[0], use[1]
-    if use[1] is None and use[0] is not None:
-        return use[0], use[0]
+    if use[1] is None:
+        return use[0], None
     return use[1], use[2]
 
 
@@ -136,7 +175,7 @@ class Legs(object):
     def load(self, path):
         if not os.path.isfile(path):
             return
-        with open(path, "r", encoding="utf-8", errors="replace", newline="") as f:
+        with io.StringIO(read_text_file(path), newline="") as f:
             for r in csv.DictReader(f):
                 if (r.get("spread_open") or "").strip() != "":
                     self.has_spread = True
@@ -275,22 +314,72 @@ def fmt2(a, b, nd=2):
     return "%s (%s)" % (fmt(a, nd), fmt(b, nd))
 
 
-def load_variant(vdir):
-    rep_path = None
-    for name in ("report.htm", "report.html"):
-        p = os.path.join(vdir, name)
+EMPTY_REPORT = {"history_quality": None, "rows": {}, "last_trade": None}
+
+
+def _first_file(vdir, names):
+    for n in names:
+        p = os.path.join(vdir, n)
         if os.path.isfile(p):
-            rep_path = p
-            break
+            return p
+    return None
+
+
+def load_variant(vdir):
+    """read one variant folder -> dict.
+
+    Layout A (current tools/run_batch.ps1): backtest and forward are two
+    separate tester runs, each with its own report and its own CSVs -
+    `report_back.htm` / `report_fwd.htm` and `TwinPulse_legs_back.csv` /
+    `TwinPulse_legs_fwd.csv`. This is the layout that gives a real forward
+    report: a single run with ForwardMode saved the backtest column only
+    (its trade list stopped at the forward boundary while the CSVs went on).
+    Layout B (older runs): one `report.htm` (backtest only) and one
+    `TwinPulse_legs.csv` with both periods mixed together.
+    """
+    out = {"report_back": None, "report_fwd": None,
+           "legs": Legs(), "legs_back": Legs(), "legs_fwd": Legs(),
+           "split": False, "report": EMPTY_REPORT}
+
+    p_back = _first_file(vdir, ("report_back.htm", "report_back.html"))
+    p_fwd = _first_file(vdir, ("report_fwd.htm", "report_fwd.html"))
+    c_back = _first_file(vdir, ("TwinPulse_legs_back.csv",))
+    c_fwd = _first_file(vdir, ("TwinPulse_legs_fwd.csv",))
+
+    if p_back or p_fwd or c_back or c_fwd:
+        out["split"] = True
+        out["report_back"] = parse_report(p_back) if p_back else None
+        out["report_fwd"] = parse_report(p_fwd) if p_fwd else None
+        if c_back:
+            out["legs_back"].load(c_back)
+        if c_fwd:
+            out["legs_fwd"].load(c_fwd)
+        legs = out["legs"]
+        legs.rows = list(out["legs_back"].rows) + list(out["legs_fwd"].rows)
+        legs.has_spread = out["legs_back"].has_spread or out["legs_fwd"].has_spread
+        legs.has_pos_net = out["legs_back"].has_pos_net or out["legs_fwd"].has_pos_net
+        out["report"] = out["report_back"] or EMPTY_REPORT
+        return out
+
+    rep_path = _first_file(vdir, ("report.htm", "report.html"))
     if rep_path is None:
         for fn in sorted(os.listdir(vdir)) if os.path.isdir(vdir) else []:
             if fn.lower().endswith((".htm", ".html")):
                 rep_path = os.path.join(vdir, fn)
                 break
-    report = parse_report(rep_path) if rep_path else {"history_quality": None, "rows": {}}
-    legs = Legs()
-    legs.load(os.path.join(vdir, "TwinPulse_legs.csv"))
-    return report, legs
+    out["report_back"] = parse_report(rep_path) if rep_path else None
+    out["report"] = out["report_back"] or EMPTY_REPORT
+    out["legs"].load(os.path.join(vdir, "TwinPulse_legs.csv"))
+    return out
+
+
+def rval(report, needles, pct=False):
+    """the single value of a statistics row of a one-column report"""
+    if report is None:
+        return None
+    vals, pcts = pick(report, *needles)
+    use = pcts if (pct and any(p is not None for p in pcts)) else vals
+    return use[0]
 
 
 def find_symbol_info(rdir, data_dir):
@@ -306,8 +395,7 @@ def find_symbol_info(rdir, data_dir):
                 cands.append(os.path.join(vdir, "TwinPulseSymbolInfo.txt"))
     for p in cands:
         if os.path.isfile(p):
-            with open(p, "r", encoding="utf-8", errors="replace") as f:
-                return p, f.read()
+            return p, read_text_file(p)
     return None, None
 
 
@@ -340,16 +428,34 @@ def main():
     ref = args.ref_spread
     csize = args.contract_size
     d_from = datetime.strptime(args.d_from, "%Y.%m.%d")
-    d_to = datetime.strptime(args.d_to, "%Y.%m.%d") + timedelta(days=1)
-    fwd_start = d_from + (d_to - d_from) * 2 / 3     # ForwardMode 2 = forward 1/3
+    d_last = datetime.strptime(args.d_to, "%Y.%m.%d")          # ToDate is inclusive
+    d_to = d_last + timedelta(days=1)                           # exclusive
+    # same split as tools/run_batch.ps1: floor(span * 2/3) whole days
+    fwd_start = d_from + timedelta(days=int((d_last - d_from).days * 2 / 3))
 
     data = {}
     for v in VARIANTS:
-        report, legs = load_variant(os.path.join(rdir, v))
-        back_rows = [r for r in legs.rows if legs._close(r) and legs._close(r) < fwd_start]
-        fwd_rows = [r for r in legs.rows if legs._close(r) and legs._close(r) >= fwd_start]
-        data[v] = {"report": report, "legs": legs,
-                   "back_rows": back_rows, "fwd_rows": fwd_rows}
+        d = load_variant(os.path.join(rdir, v))
+        legs = d["legs"]
+        if d["split"]:
+            d["back_rows"] = d["legs_back"].rows
+            d["fwd_rows"] = d["legs_fwd"].rows
+        else:
+            d["back_rows"] = [r for r in legs.rows
+                              if legs._close(r) and legs._close(r) < fwd_start]
+            d["fwd_rows"] = [r for r in legs.rows
+                             if legs._close(r) and legs._close(r) >= fwd_start]
+        data[v] = d
+
+    def pair(v, needles, pct=False):
+        """-> (back, fwd) of one statistic, from the two reports when the
+        batch used the split layout; a legacy single-column report gives
+        (value, None) - the forward side was never measured."""
+        d = data[v]
+        b = rval(d["report_back"], needles, pct)
+        if d["report_fwd"] is not None:
+            return b, rval(d["report_fwd"], needles, pct)
+        return pick_pair(d["report"], needles, pct)
 
     # ---- refuse to judge an empty batch -----------------------------
     # A batch whose tester never started (MT5 still open -> /config is
@@ -359,11 +465,7 @@ def main():
     def _has_data(d):
         if d["legs"].rows:
             return True
-        try:
-            net, _ = pick_pair(d["report"], ["total net profit"])
-        except Exception:
-            net = None
-        return net is not None
+        return rval(d["report_back"], ["total net profit"]) is not None
 
     if not any(_has_data(data[v]) for v in VARIANTS):
         print("NO DATA: no variant has a report or legs.csv rows in %s" % rdir)
@@ -395,7 +497,7 @@ def main():
     rnd_pf = None       # report side
     rnd_pf_ref = None   # stressed side (legs level)
     for v in RANDOM:
-        _, fwd_pf = pick_pair(data[v]["report"], ["profit factor"])
+        _, fwd_pf = pair(v, ["profit factor"])
         if fwd_pf is not None:
             rnd_pf = fwd_pf if rnd_pf is None else max(rnd_pf, fwd_pf)
         pf_ref = data[v]["legs"].pf_ref(data[v]["fwd_rows"], ref, csize)
@@ -404,16 +506,17 @@ def main():
 
     def gates(v):
         d = data[v]
-        rep, legs = d["report"], d["legs"]
+        legs = d["legs"]
         is_random = v in RANDOM
-        fwd_net, _ = pick_pair(rep, ["total net profit"])
-        _, fwd_pf = pick_pair(rep, ["profit factor"])
-        _, fwd_dd = pick_pair(rep, ["equity drawdown"], pct=True)
+        _, fwd_net = pair(v, ["total net profit"])
+        _, fwd_pf = pair(v, ["profit factor"])
+        _, fwd_dd = pair(v, ["equity drawdown"], pct=True)
         if fwd_dd is None:
-            _, fwd_dd = pick_pair(rep, ["drawdown"], pct=True)
-        _, fwd_rf = pick_pair(rep, ["recovery factor"])
+            _, fwd_dd = pair(v, ["drawdown"], pct=True)
+        _, fwd_rf = pair(v, ["recovery factor"])
         total_legs = legs.count()
-        hq = rep.get("history_quality")
+        hq = (d["report_back"] or {}).get("history_quality")
+        hq_f = (d["report_fwd"] or {}).get("history_quality") if d["report_fwd"] else None
 
         # the two series: as recorded and stressed to the reference spread
         fwd_net_ref = legs.net_ref(d["fwd_rows"], ref, csize)
@@ -426,8 +529,13 @@ def main():
         h2_ref = legs.net_ref(h2_rows, ref, csize)
 
         g = {}
-        g["valid"] = hq is None or hq >= 90.0
+        # a gate needs real tick history on BOTH sides; a missing forward
+        # report is not "no history" but it leaves every forward gate None,
+        # so the variant cannot pass anyway
+        g["valid"] = ((hq is None or hq >= 90.0) and
+                      (hq_f is None or hq_f >= 90.0))
         g["hq"] = hq
+        g["hq_f"] = hq_f
 
         # worse-of-two: a net / PF gate must pass on BOTH series
         pf_gate_vals = [x for x in (fwd_pf, fwd_pf_ref) if x is not None]
@@ -452,7 +560,7 @@ def main():
             g["_pass"] = False
         else:
             checks = [val for key, val in g.items()
-                      if key not in ("valid", "hq", "_vals", "_pass") and val is not None]
+                      if key not in ("valid", "hq", "hq_f", "_vals", "_pass") and val is not None]
             g["_pass"] = all(checks) if checks else False
         return g
 
@@ -468,13 +576,26 @@ def main():
 
     posnet = {}
     for v in VARIANTS:
-        legs = data[v]["legs"]
-        s = legs.net()
-        rn = report_net_total(data[v]["report"])
-        if rn is None or not legs.rows:
-            posnet[v] = (s, rn, None)
-            continue
-        posnet[v] = (s, rn, abs(s - rn) <= 1.00)
+        d = data[v]
+        legs = d["legs"]
+        row = []
+        for rows, rep in ((d["back_rows"], d["report_back"]),
+                          (d["fwd_rows"], d["report_fwd"])):
+            rn = report_net_total(rep) if rep is not None else None
+            if rn is None:
+                row.append((legs.net(rows) if rows else None, None, None))
+                continue
+            # only the rows the report really covers: the tester report of a
+            # single run ends at its last trade (the forward pass of a
+            # ForwardMode run is NOT in the saved report, while the CSVs go
+            # on), so comparing it with every row of the period is wrong
+            lt = rep.get("last_trade")
+            use = rows
+            if lt is not None:
+                use = [r for r in rows if legs._close(r) is None or legs._close(r) <= lt]
+            s = legs.net(use)
+            row.append((s, rn, abs(s - rn) <= 1.00))
+        posnet[v] = row
 
     # ---- the header block (symbol specs + the run's spread) ---------
     head = []
@@ -505,17 +626,23 @@ def main():
         f_net = legs.net(d["fwd_rows"])
         b_ref = legs.net_ref(d["back_rows"], ref, csize)
         f_ref = legs.net_ref(d["fwd_rows"], ref, csize)
-        b_pf, _ = pick_pair(rep, ["profit factor"])
-        _, f_pf = pick_pair(rep, ["profit factor"])
-        _, f_dd = pick_pair(rep, ["equity drawdown"], pct=True)
+        b_pf, f_pf = pair(v, ["profit factor"])
+        _, f_dd = pair(v, ["equity drawdown"], pct=True)
         if f_dd is None:
-            _, f_dd = pick_pair(rep, ["drawdown"], pct=True)
-        _, f_rf = pick_pair(rep, ["recovery factor"])
-        hq = rep.get("history_quality")
+            _, f_dd = pair(v, ["drawdown"], pct=True)
+        _, f_rf = pair(v, ["recovery factor"])
         g = allg[v]
-        mark = "NOT VALID FOR GATES" if not g["valid"] else ("PASS" if g["_pass"] else "fail")
+        hq = g["hq"]
+        hq_f = g["hq_f"]
+        hq_txt = fmt(hq, 2, "%") if hq_f is None else ("%s / %s" % (fmt(hq, 2, "%"), fmt(hq_f, 2, "%")))
+        if not g["valid"]:
+            mark = "NOT VALID FOR GATES"
+        elif f_pf is None and f_dd is None:
+            mark = "NO FORWARD REPORT"
+        else:
+            mark = "PASS" if g["_pass"] else "fail"
         return ("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %d | %s | %s | %s |" % (
-            v, fmt(hq, 2, "%"),
+            v, hq_txt,
             fmt(b_net), fmt(b_ref), fmt(f_net), fmt(f_ref),
             fmt(b_pf), fmt(f_pf), fmt(f_dd, 2, "%"), fmt(f_rf),
             legs.count(), fmt(legs.gross_pf()), fmt(legs.spread_paid()), mark))
@@ -530,8 +657,16 @@ def main():
         lines.append("> contains NO verdict. Run `run_batch.ps1` again (it is resume-safe)")
         lines.append("> and re-summarize with the complete batch.")
         lines.append("")
-    lines.append("period %s .. %s, forward starts %s (ForwardMode 2 = forward 1/3)."
+    split_layout = any(d["split"] for d in data.values())
+    lines.append("period %s .. %s, forward starts %s (forward = the last 1/3)."
                  % (args.d_from, args.d_to, fwd_start.strftime("%Y.%m.%d")))
+    if split_layout:
+        lines.append("Backtest and forward are two SEPARATE tester runs"
+                     " (`report_back` / `report_fwd`), so every forward"
+                     " number is measured, not copied.")
+    else:
+        lines.append("Legacy single-run layout: the saved report covers the"
+                     " backtest only, the forward columns stay n/a.")
     lines.append("Report fields are taken from the tester report; legs / gross / spread")
     lines.append("from `TwinPulse_legs.csv`. Every legs-level net uses the `pos_net`")
     lines.append("column (the full realised P/L of the position). Gates use the FORWARD")
@@ -566,19 +701,20 @@ def main():
     lines.append("")
     lines.append("## pos_net vs report net (must match within 1.00)")
     lines.append("")
-    lines.append("| variant | sum(pos_net) | report net | check |")
-    lines.append("|---|---|---|---|")
-    for v in VARIANTS:
-        s, rn, ok = posnet[v]
+    lines.append("| variant | sum(pos_net) BACK | report net BACK | check |"
+                 " sum(pos_net) FWD | report net FWD | check |")
+    lines.append("|---|---|---|---|---|---|---|")
+    def _chk(ok):
         if ok is None:
-            mark = NA
-        elif ok:
-            mark = "OK"
-        else:
-            mark = "**MISMATCH**"
-        lines.append("| %s | %s | %s | %s |" % (v, fmt(s), fmt(rn), mark))
+            return NA
+        return "OK" if ok else "**MISMATCH**"
+
+    for v in VARIANTS:
+        (sb, rb_, ob), (sf, rf_, of) = posnet[v]
+        lines.append("| %s | %s | %s | %s | %s | %s | %s |"
+                     % (v, fmt(sb), fmt(rb_), _chk(ob), fmt(sf), fmt(rf_), _chk(of)))
     lines.append("")
-    bad = [v for v in VARIANTS if posnet[v][2] is False]
+    bad = [v for v in VARIANTS if posnet[v][0][2] is False or posnet[v][1][2] is False]
     if bad:
         lines.append("**MISMATCH**: sum(pos_net) and the report net disagree for %s -"
                      " the legs.csv accounting does not add up to the tester report." % ", ".join(bad))
@@ -595,12 +731,13 @@ def main():
             lines.append("no legs.csv rows.")
             lines.append("")
             continue
-        s, rn, ok = posnet[v]
-        if ok is None:
-            lines.append("sum(pos_net) %s vs report net: %s" % (fmt(s), fmt(rn)))
-        else:
-            lines.append("sum(pos_net) %s vs report net %s: %s"
-                         % (fmt(s), fmt(rn), "OK" if ok else "**MISMATCH**"))
+        for side, (s, rn, ok) in zip(("BACK", "FWD"), posnet[v]):
+            if ok is None:
+                lines.append("%s: sum(pos_net) %s vs report net: %s"
+                             % (side, fmt(s), fmt(rn)))
+            else:
+                lines.append("%s: sum(pos_net) %s vs report net %s: %s"
+                             % (side, fmt(s), fmt(rn), "OK" if ok else "**MISMATCH**"))
         byyear = legs.by_ref(lambda r: r["time"][:4], legs.rows, ref, csize)
         bymonth = legs.by_ref(lambda r: r["time"][:7], legs.rows, ref, csize)
         byreason = legs.by_ref(lambda r: r.get("reason", "?"), legs.rows, ref, csize)
@@ -640,6 +777,17 @@ def main():
                      % ", ".join(missing))
         lines.append("A verdict needs all 8 variants; rerun the batch (resume-safe)")
         lines.append("and re-summarize.")
+    elif not any(allg[v]["valid"] for v in VARIANTS):
+        lines.append("**NO VALID RESULT - no verdict.** The history quality is below")
+        lines.append("90% for every variant (BOTH halves must be at least 90%), so the")
+        lines.append("numbers describe a mostly synthetic tick stream. Do not read the")
+        lines.append("gross PF or the gates as a result: download the real ticks of the")
+        lines.append("symbol for the whole period and rerun the batch.")
+    elif any(d["report_fwd"] is None for d in data.values()):
+        lines.append("**NO FORWARD REPORT - no verdict.** The forward period has no")
+        lines.append("tester report, so the forward gates (PF / DD / RF) were not")
+        lines.append("measured. Rerun the batch with the current run_batch.ps1 (it runs")
+        lines.append("backtest and forward as two separate tester runs).")
     elif passing:
         lines.append("**PASS: %s** -> trade the SIMPLEST passing variant (%s) on a"
                      % (", ".join(passing), passing[0]))
