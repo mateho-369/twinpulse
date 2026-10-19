@@ -24,7 +24,11 @@ void OnStart()
   {
    string fileName = TP_NEWS_CSV;
 
-   int handle = FileOpen(fileName, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ, 0, FILE_COMMON);
+   //--- FILE_COMMON is a FLAG of open_flags: FileOpen(name, flags,
+   //--- delimiter, codepage). A misplaced FILE_COMMON as the 4th
+   //--- argument is used as the codepage and the file lands in the
+   //--- local MQL5\Files instead of Common\Files.
+   int handle = FileOpen(fileName, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ | FILE_COMMON, ',', CP_ACP);
    if(handle == INVALID_HANDLE)
      {
       Print("TwinPulseNewsExport: cannot open ", fileName, " in Common\\Files, error ", GetLastError());
@@ -38,12 +42,13 @@ void OnStart()
    if(to <= from)
      {
       Print("TwinPulseNewsExport: the end time is before the start time.");
-      FileClose((int)handle);
+      FileClose(handle);
       return;
      }
 
    int written = 0;
    int failed  = 0;
+   int lastYear = 0;
    const int chunkDays = 31;
 
    datetime cursor = from;
@@ -84,12 +89,28 @@ void OnStart()
         }
 
       cursor = chunkEnd + 60;
+
+      //--- save every chunk and show the progress per year -----------
+      FileFlush(handle);
+      MqlDateTime chunkTime;
+      TimeToStruct(chunkEnd, chunkTime);
+      if(chunkTime.year != lastYear)
+        {
+         lastYear = chunkTime.year;
+         Print(StringFormat("TwinPulseNewsExport: year %d reached, %d events written so far",
+                            lastYear, written));
+        }
      }
 
-   FileClose((int)handle);
+   FileFlush(handle);
+   FileClose(handle);
 
    Print("=====================================================");
    Print("  TwinPulse news export finished");
+   if(FileIsExist(fileName, FILE_COMMON))
+      Print("  check  : the file exists in Common\\Files");
+   else
+      Print("  check  : WARNING, the file was NOT found in Common\\Files after the export");
    Print(StringFormat("  file   : Common\\Files\\%s", fileName));
    Print(StringFormat("  period : %s -> %s (server time)",
                        TimeToString(from, TIME_DATE), TimeToString(to, TIME_DATE)));

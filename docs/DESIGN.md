@@ -193,6 +193,8 @@ All inputs are in `MQL5/Include/TwinPulse/Config.mqh`.
 | FridayFlattenHour | 20 | flatten hour on Friday |
 | FridayFlattenMinute | 45 | flatten minute on Friday |
 | FlattenBeforeWeekend | true | close everything before the weekend |
+| FlattenBeforeRollover | false | close all legs before the rollover window (owner tests true vs false) |
+| RolloverFlattenMinutes | 10 | 1..60, flatten N minutes before RolloverStartHour, blocks re-opens until RolloverEndHour |
 | ReopenCooldownSec | 60 | 10..600, cooldown between two re-opens |
 | UseNewsFilter | true | block around high impact USD news |
 | NewsMinutesBefore | 15 | 0..60 |

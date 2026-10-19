@@ -43,6 +43,9 @@ datetime TP_News_UtcToServer(const datetime utcTime)
 
 //+------------------------------------------------------------------+
 //| TP_News_LoadCsv - read the exported news file                       |
+//|  FILE_COMMON is a flag of open_flags (FileOpen(name, flags,        |
+//|  delimiter, codepage)). With the ',' delimiter FileReadString      |
+//|  returns one CSV field per call: datetime, impact, currency, event.|
 //+------------------------------------------------------------------+
 bool TP_News_LoadCsv(void)
   {
@@ -50,7 +53,7 @@ bool TP_News_LoadCsv(void)
    g_newsLoaded    = false;
    g_newsCsvFound  = false;
 
-   int handle = FileOpen(NewsCsvFile, FILE_READ | FILE_CSV | FILE_ANSI | FILE_SHARE_READ, 0, FILE_COMMON);
+   int handle = FileOpen(NewsCsvFile, FILE_READ | FILE_CSV | FILE_ANSI | FILE_SHARE_READ | FILE_COMMON, ',', CP_ACP);
    if(handle == INVALID_HANDLE)
      {
       if(!g_newsWarned)
@@ -63,21 +66,16 @@ bool TP_News_LoadCsv(void)
       return false;
      }
 
-   bool firstLine = true;
    int rows = 0;
    while(!FileIsEnding(handle))
      {
-      string line = FileReadString(handle);
-      if(StringLen(line) == 0) continue;
-      if(firstLine) { firstLine = false; if(StringFind(line, "datetime") == 0) continue; }
+      string dtStr = FileReadString(handle);
+      if(StringLen(dtStr) == 0) continue;    // empty line / trailing newline
+      string imp = FileReadString(handle);
+      string cur = FileReadString(handle);
+      FileReadString(handle);                 // the event text is not used
 
-      string fields[];
-      int n = StringSplit(line, ',', fields);
-      if(n < 3) continue;
-
-      string dtStr = fields[0];
-      string imp   = fields[1];
-      string cur   = fields[2];
+      if(dtStr == "datetime") continue;      // the header line
       StringTrimLeft(dtStr); StringTrimRight(dtStr);
       StringTrimLeft(imp);   StringTrimRight(imp);
       StringTrimLeft(cur);   StringTrimRight(cur);
@@ -93,7 +91,7 @@ bool TP_News_LoadCsv(void)
       g_newsTimes[size] = t;
       rows++;
      }
-   FileClose((int)handle);
+   FileClose(handle);
 
    g_newsCsvFound = true;
    g_newsLoaded   = true;

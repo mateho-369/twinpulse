@@ -40,16 +40,35 @@ The format follows `Keep a Changelog`, the project uses semantic versioning.
   logged**. Before a Close By both tickets are verified (both exist,
   opposite types, same symbol, same magic), otherwise the winner is closed
   normally.
+* `FILE_COMMON` was passed as the **4th** `FileOpen` argument (the codepage!)
+  instead of OR-ed into `open_flags` in `TwinPulseNewsExport.mq5`,
+  `Logger.mqh` and `News.mqh`: the signature is
+  `FileOpen(name, open_flags, delimiter, codepage)`, so every file went to
+  the **local** `MQL5\Files` (and the log / CSV files came out 0 bytes in
+  the tester agent folder) instead of `Common\Files`. Every call is now
+  `FileOpen(name, FILE_... | FILE_COMMON, ',', CP_ACP)`; `FileDelete` and
+  `FileIsExist` already took `FILE_COMMON` as their 2nd argument. The news
+  CSV reader now reads real CSV fields (`datetime,impact,currency,event`)
+  with the ',' delimiter. The news export flushes every chunk and prints
+  the progress per year, so the run can be followed on screen.
 
 ### Added
 
 * `OnDeinit` prints an `exec summary` with the counters for the smoke test:
   modify attempts / failures, closes / failures, Close By count and
   `STOP_THROUGH` exits.
+* New inputs `FlattenBeforeRollover` (default **false**, so the existing
+  defaults stay comparable) and `RolloverFlattenMinutes` (default 10):
+  when enabled, every open leg is closed N minutes before
+  `RolloverStartHour` and re-opens / new cycles stay blocked until
+  `RolloverEndHour` (the legs held into the rollover were stopped by the
+  rollover spread spike). Test `true` vs `false`.
 * SelfTest cases for the new pure stop helpers (`TP_StopMinDistance`,
   `TP_ClampStop`, `TP_StopThroughMarket`, `TP_StopIsBetter`,
   `TP_StopFrozen`), including the exact "Invalid stops" scenario of the
-  smoke test log.
+  smoke test log, for the rollover window (`TP_Risk_InRolloverBlock`) and
+  a `Common\Files` write / read / delete round trip that guards the
+  `FileOpen` flag placement.
 * `docs/WINDOWS_RUNBOOK.md` (English). The Khmer runbook
   `docs/WINDOWS_RUNBOOK_KM.md` now states the two hard preconditions of
   every tester run: run `TwinPulseNewsExport` once on a live chart first

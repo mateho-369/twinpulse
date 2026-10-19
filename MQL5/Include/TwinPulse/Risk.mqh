@@ -110,17 +110,50 @@ bool TP_Risk_SpreadOK(void)
   }
 
 //+------------------------------------------------------------------+
+//| TP_Risk_InRolloverBlock - pure test for the rollover block window |
+//|  The base window is [rolloverStart, rolloverEnd) in server hours. |
+//|  flattenMinutes > 0 extends it that many minutes BEFORE           |
+//|  rolloverStart (the flatten must not be followed by a re-open).   |
+//+------------------------------------------------------------------+
+bool TP_Risk_InRolloverBlock(const datetime t, const int flattenMinutes,
+                             const int rolloverStart, const int rolloverEnd)
+  {
+   int hour   = TP_ServerHour(t);
+   int minute = TP_ServerMinute(t);
+
+   //--- the base window: unchanged hour logic -----------------------
+   if(hour >= rolloverStart && hour < rolloverEnd) return true;
+
+   //--- the pre-rollover extension (FlattenBeforeRollover) ----------
+   if(flattenMinutes > 0)
+     {
+      int nowMin   = hour * 60 + minute;
+      int startMin = rolloverStart * 60 - flattenMinutes;
+      if(startMin < 0) startMin += 1440;          // wraps midnight
+      if(startMin < rolloverStart * 60)
+        {
+         if(nowMin >= startMin && nowMin < rolloverStart * 60) return true;
+        }
+      else if(nowMin >= startMin) return true;    // the extension wraps midnight
+     }
+   return false;
+  }
+
+//+------------------------------------------------------------------+
 //| TP_Risk_SessionFilter - pure time filter, used by the self test   |
+//|  rolloverFlattenMinutes > 0 blocks the re-opens already N minutes |
+//|  before the rollover (see FlattenBeforeRollover).                 |
 //+------------------------------------------------------------------+
 bool TP_Risk_SessionFilter(const datetime t,
                            const int sessionStart, const int sessionEnd,
                            const int rolloverStart, const int rolloverEnd,
-                           const int fridayStop, const bool newCycle)
+                           const int fridayStop, const bool newCycle,
+                           const int rolloverFlattenMinutes = 0)
   {
    if(TP_IsWeekend(t)) return false;
 
    int hour = TP_ServerHour(t);
-   if(hour >= rolloverStart && hour < rolloverEnd) return false;
+   if(TP_Risk_InRolloverBlock(t, rolloverFlattenMinutes, rolloverStart, rolloverEnd)) return false;
 
    if(newCycle)
      {
@@ -136,9 +169,11 @@ bool TP_Risk_SessionFilter(const datetime t,
 //+------------------------------------------------------------------+
 bool TP_Risk_SessionOK(const datetime t, const bool newCycle)
   {
+   //--- with FlattenBeforeRollover the block starts N minutes early --
+   int flattenMin = FlattenBeforeRollover ? RolloverFlattenMinutes : 0;
    return TP_Risk_SessionFilter(t, SessionStartHour, SessionEndHour,
                                 RolloverStartHour, RolloverEndHour,
-                                FridayStopHour, newCycle);
+                                FridayStopHour, newCycle, flattenMin);
   }
 
 //+------------------------------------------------------------------+

@@ -179,6 +179,8 @@ input int    FridayStopHour     = 20;             // Friday: no new cycle from t
 input int    FridayFlattenHour  = 20;             // Friday: flatten everything at this hour (server)
 input int    FridayFlattenMinute= 45;             // Friday: flatten everything at this minute
 input bool   FlattenBeforeWeekend = true;         // Close everything before the weekend
+input bool   FlattenBeforeRollover = false;       // Close all legs before the rollover window (test true vs false)
+input int    RolloverFlattenMinutes = 10;         // Flatten N minutes before RolloverStartHour (1..60)
 input int    ReopenCooldownSec  = 60;             // Cooldown between two re-opens, seconds (10..600)
 
 //+------------------------------------------------------------------+
@@ -747,10 +749,14 @@ void TP_LogFileWrite(const string line)
   {
    if(!EnableFileLog) return;
 
-   int handle = FileOpen(TP_LOG_FILE, FILE_READ | FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ, 0, FILE_COMMON);
+   //--- FILE_COMMON is a FLAG of open_flags: FileOpen(name, flags,
+   //--- delimiter, codepage). A misplaced FILE_COMMON as the 4th
+   //--- argument is used as the codepage and the file lands in the
+   //--- local MQL5\Files instead of Common\Files (empty in the tester).
+   int handle = FileOpen(TP_LOG_FILE, FILE_READ | FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ | FILE_COMMON, ',', CP_ACP);
    bool created = (handle == INVALID_HANDLE);
    if(created)
-      handle = FileOpen(TP_LOG_FILE, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ, 0, FILE_COMMON);
+      handle = FileOpen(TP_LOG_FILE, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ | FILE_COMMON, ',', CP_ACP);
    if(handle == INVALID_HANDLE) return;
 
    if(created)
@@ -758,9 +764,9 @@ void TP_LogFileWrite(const string line)
 
    if(FileSize(handle) > TP_LOG_MAX_BYTES)
      {
-      FileClose((int)handle);
+      FileClose(handle);
       FileDelete(TP_LOG_FILE, FILE_COMMON);
-      handle = FileOpen(TP_LOG_FILE, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ, 0, FILE_COMMON);
+      handle = FileOpen(TP_LOG_FILE, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ | FILE_COMMON, ',', CP_ACP);
       if(handle == INVALID_HANDLE) return;
       FileWriteString(handle, "time,level,symbol,magic,message\n");
      }
@@ -822,10 +828,11 @@ void TP_CsvAppend(const string fileName, const string header, const string line)
   {
    if(!WriteCsvLogs) return;
 
-   int handle = FileOpen(fileName, FILE_READ | FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ, 0, FILE_COMMON);
+   //--- FILE_COMMON belongs to open_flags, see TP_LogFileWrite --------
+   int handle = FileOpen(fileName, FILE_READ | FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ | FILE_COMMON, ',', CP_ACP);
    bool created = (handle == INVALID_HANDLE);
    if(created)
-      handle = FileOpen(fileName, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ, 0, FILE_COMMON);
+      handle = FileOpen(fileName, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ | FILE_COMMON, ',', CP_ACP);
    if(handle == INVALID_HANDLE) return;
 
    if(created)
@@ -1335,6 +1342,9 @@ datetime TP_News_UtcToServer(const datetime utcTime)
 
 //+------------------------------------------------------------------+
 //| TP_News_LoadCsv - read the exported news file                       |
+//|  FILE_COMMON is a flag of open_flags (FileOpen(name, flags,        |
+//|  delimiter, codepage)). With the ',' delimiter FileReadString      |
+//|  returns one CSV field per call: datetime, impact, currency, event.|
 //+------------------------------------------------------------------+
 bool TP_News_LoadCsv(void)
   {
@@ -1342,7 +1352,7 @@ bool TP_News_LoadCsv(void)
    g_newsLoaded    = false;
    g_newsCsvFound  = false;
 
-   int handle = FileOpen(NewsCsvFile, FILE_READ | FILE_CSV | FILE_ANSI | FILE_SHARE_READ, 0, FILE_COMMON);
+   int handle = FileOpen(NewsCsvFile, FILE_READ | FILE_CSV | FILE_ANSI | FILE_SHARE_READ | FILE_COMMON, ',', CP_ACP);
    if(handle == INVALID_HANDLE)
      {
       if(!g_newsWarned)
@@ -1355,21 +1365,16 @@ bool TP_News_LoadCsv(void)
       return false;
      }
 
-   bool firstLine = true;
    int rows = 0;
    while(!FileIsEnding(handle))
      {
-      string line = FileReadString(handle);
-      if(StringLen(line) == 0) continue;
-      if(firstLine) { firstLine = false; if(StringFind(line, "datetime") == 0) continue; }
+      string dtStr = FileReadString(handle);
+      if(StringLen(dtStr) == 0) continue;    // empty line / trailing newline
+      string imp = FileReadString(handle);
+      string cur = FileReadString(handle);
+      FileReadString(handle);                 // the event text is not used
 
-      string fields[];
-      int n = StringSplit(line, ',', fields);
-      if(n < 3) continue;
-
-      string dtStr = fields[0];
-      string imp   = fields[1];
-      string cur   = fields[2];
+      if(dtStr == "datetime") continue;      // the header line
       StringTrimLeft(dtStr); StringTrimRight(dtStr);
       StringTrimLeft(imp);   StringTrimRight(imp);
       StringTrimLeft(cur);   StringTrimRight(cur);
@@ -1385,7 +1390,7 @@ bool TP_News_LoadCsv(void)
       g_newsTimes[size] = t;
       rows++;
      }
-   FileClose((int)handle);
+   FileClose(handle);
 
    g_newsCsvFound = true;
    g_newsLoaded   = true;
@@ -2173,17 +2178,50 @@ bool TP_Risk_SpreadOK(void)
   }
 
 //+------------------------------------------------------------------+
+//| TP_Risk_InRolloverBlock - pure test for the rollover block window |
+//|  The base window is [rolloverStart, rolloverEnd) in server hours. |
+//|  flattenMinutes > 0 extends it that many minutes BEFORE           |
+//|  rolloverStart (the flatten must not be followed by a re-open).   |
+//+------------------------------------------------------------------+
+bool TP_Risk_InRolloverBlock(const datetime t, const int flattenMinutes,
+                             const int rolloverStart, const int rolloverEnd)
+  {
+   int hour   = TP_ServerHour(t);
+   int minute = TP_ServerMinute(t);
+
+   //--- the base window: unchanged hour logic -----------------------
+   if(hour >= rolloverStart && hour < rolloverEnd) return true;
+
+   //--- the pre-rollover extension (FlattenBeforeRollover) ----------
+   if(flattenMinutes > 0)
+     {
+      int nowMin   = hour * 60 + minute;
+      int startMin = rolloverStart * 60 - flattenMinutes;
+      if(startMin < 0) startMin += 1440;          // wraps midnight
+      if(startMin < rolloverStart * 60)
+        {
+         if(nowMin >= startMin && nowMin < rolloverStart * 60) return true;
+        }
+      else if(nowMin >= startMin) return true;    // the extension wraps midnight
+     }
+   return false;
+  }
+
+//+------------------------------------------------------------------+
 //| TP_Risk_SessionFilter - pure time filter, used by the self test   |
+//|  rolloverFlattenMinutes > 0 blocks the re-opens already N minutes |
+//|  before the rollover (see FlattenBeforeRollover).                 |
 //+------------------------------------------------------------------+
 bool TP_Risk_SessionFilter(const datetime t,
                            const int sessionStart, const int sessionEnd,
                            const int rolloverStart, const int rolloverEnd,
-                           const int fridayStop, const bool newCycle)
+                           const int fridayStop, const bool newCycle,
+                           const int rolloverFlattenMinutes = 0)
   {
    if(TP_IsWeekend(t)) return false;
 
    int hour = TP_ServerHour(t);
-   if(hour >= rolloverStart && hour < rolloverEnd) return false;
+   if(TP_Risk_InRolloverBlock(t, rolloverFlattenMinutes, rolloverStart, rolloverEnd)) return false;
 
    if(newCycle)
      {
@@ -2199,9 +2237,11 @@ bool TP_Risk_SessionFilter(const datetime t,
 //+------------------------------------------------------------------+
 bool TP_Risk_SessionOK(const datetime t, const bool newCycle)
   {
+   //--- with FlattenBeforeRollover the block starts N minutes early --
+   int flattenMin = FlattenBeforeRollover ? RolloverFlattenMinutes : 0;
    return TP_Risk_SessionFilter(t, SessionStartHour, SessionEndHour,
                                 RolloverStartHour, RolloverEndHour,
-                                FridayStopHour, newCycle);
+                                FridayStopHour, newCycle, flattenMin);
   }
 
 //+------------------------------------------------------------------+
@@ -3914,6 +3954,19 @@ void OnTimer()
             TP_LogInfo("Friday flatten: closing every open leg.");
             TP_Legs_CloseCycle("friday flatten");
            }
+        }
+     }
+
+   //--- flatten before the rollover window (FlattenBeforeRollover) ------
+   //--- closes the legs N minutes before RolloverStartHour; the re-opens
+   //--- stay blocked until RolloverEndHour by the session filter --------
+   if(FlattenBeforeRollover &&
+      TP_Risk_InRolloverBlock(now, RolloverFlattenMinutes, RolloverStartHour, RolloverEndHour))
+     {
+      if(TP_State_OpenLegCount() > 0)
+        {
+         TP_LogInfo("Rollover flatten: closing every open leg before the rollover window.");
+         TP_Legs_CloseCycle("rollover flatten");
         }
      }
 

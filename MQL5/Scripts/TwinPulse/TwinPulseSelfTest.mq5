@@ -3,7 +3,8 @@
 //|                                                                  |
 //|  Pure function tests of the TwinPulse Hedge EA.                   |
 //|  Run this script on any chart, every line must print PASS.        |
-//|  It never opens a position and never changes the account.          |
+//|  It never opens a position and never changes the account. It      |
+//|  writes one small temporary file to Common\Files and deletes it.  |
 //+------------------------------------------------------------------+
 #property copyright "TwinPulse Hedge EA"
 #property version   "1.00"
@@ -264,6 +265,22 @@ void Test_TimeFilters(void)
             !TP_Risk_SessionFilter(wednesday, 13, 21, 21, 24, 20, true));
    TP_Check("the session start boundary itself is allowed",
             TP_Risk_SessionFilter(wednesday, 12, 21, 21, 24, 20, true));
+
+   //--- the rollover flatten window (FlattenBeforeRollover) ---------
+   datetime beforeFlatten = StringToTime("2024.01.10 20:49");
+   datetime earlyEvening  = StringToTime("2024.01.10 20:50");
+   TP_Check("20:49 is outside the pre-rollover window",
+            !TP_Risk_InRolloverBlock(beforeFlatten, 10, 21, 24));
+   TP_Check("20:50 is inside the pre-rollover window (10 min before 21:00)",
+            TP_Risk_InRolloverBlock(earlyEvening, 10, 21, 24));
+   TP_Check("21:30 stays blocked by the base rollover window",
+            TP_Risk_InRolloverBlock(StringToTime("2024.01.10 21:30"), 10, 21, 24));
+   TP_Check("without minutes the block starts at the rollover hour",
+            !TP_Risk_InRolloverBlock(earlyEvening, 0, 21, 24));
+   TP_Check("the session filter blocks a re-open at 20:50 when the flatten is armed",
+            !TP_Risk_SessionFilter(earlyEvening, 0, 21, 21, 24, 20, false, 10));
+   TP_Check("the session filter still allows a re-open at 20:50 when the flatten is off",
+            TP_Risk_SessionFilter(earlyEvening, 0, 21, 21, 24, 20, false));
   }
 
 //+------------------------------------------------------------------+
@@ -386,6 +403,45 @@ void Test_StopClamp(void)
   }
 
 //+------------------------------------------------------------------+
+//| Test 11 - Common\Files round trip (FileOpen flag placement)       |
+//+------------------------------------------------------------------+
+void Test_FileRoundTrip(void)
+  {
+   Print("--- Common\\Files round trip ---");
+   string name = "TwinPulse_selftest.tmp";
+
+   //--- FILE_COMMON must sit in open_flags, not in the codepage ------
+   int w = FileOpen(name, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ | FILE_COMMON, ',', CP_ACP);
+   TP_Check("the test file opens in Common\\Files", w != INVALID_HANDLE);
+   if(w != INVALID_HANDLE)
+     {
+      FileWriteString(w, "hello,common\n");
+      FileWriteString(w, "second,line\n");
+      FileFlush(w);
+      FileClose(w);
+     }
+
+   TP_Check("FileIsExist finds the test file in Common\\Files", FileIsExist(name, FILE_COMMON));
+
+   int r = FileOpen(name, FILE_READ | FILE_CSV | FILE_ANSI | FILE_SHARE_READ | FILE_COMMON, ',', CP_ACP);
+   TP_Check("the test file reads back from Common\\Files", r != INVALID_HANDLE);
+   bool ok = false;
+   if(r != INVALID_HANDLE)
+     {
+      string a1 = FileReadString(r);
+      string a2 = FileReadString(r);
+      string b1 = FileReadString(r);
+      string b2 = FileReadString(r);
+      FileClose(r);
+      ok = (a1 == "hello" && a2 == "common" && b1 == "second" && b2 == "line");
+     }
+   TP_Check("the round trip content matches", ok);
+
+   FileDelete(name, FILE_COMMON);
+   TP_Check("the test file is deleted again", !FileIsExist(name, FILE_COMMON));
+  }
+
+//+------------------------------------------------------------------+
 //| OnStart - run every test                                          |
 //+------------------------------------------------------------------+
 void OnStart()
@@ -407,6 +463,7 @@ void OnStart()
    Test_Comment();
    Test_Median();
    Test_StopClamp();
+   Test_FileRoundTrip();
 
    Print("=====================================================");
    Print(StringFormat("  self test finished: %d passed, %d failed", g_passed, g_failed));

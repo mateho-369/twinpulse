@@ -151,6 +151,8 @@ input int    FridayStopHour     = 20;             // Friday: no new cycle from t
 input int    FridayFlattenHour  = 20;             // Friday: flatten everything at this hour (server)
 input int    FridayFlattenMinute= 45;             // Friday: flatten everything at this minute
 input bool   FlattenBeforeWeekend = true;         // Close everything before the weekend
+input bool   FlattenBeforeRollover = false;       // Close all legs before the rollover window (test true vs false)
+input int    RolloverFlattenMinutes = 10;         // Flatten N minutes before RolloverStartHour (1..60)
 input int    ReopenCooldownSec  = 60;             // Cooldown between two re-opens, seconds (10..600)
 
 //+------------------------------------------------------------------+

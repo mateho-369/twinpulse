@@ -301,6 +301,19 @@ void OnTimer()
         }
      }
 
+   //--- flatten before the rollover window (FlattenBeforeRollover) ------
+   //--- closes the legs N minutes before RolloverStartHour; the re-opens
+   //--- stay blocked until RolloverEndHour by the session filter --------
+   if(FlattenBeforeRollover &&
+      TP_Risk_InRolloverBlock(now, RolloverFlattenMinutes, RolloverStartHour, RolloverEndHour))
+     {
+      if(TP_State_OpenLegCount() > 0)
+        {
+         TP_LogInfo("Rollover flatten: closing every open leg before the rollover window.");
+         TP_Legs_CloseCycle("rollover flatten");
+        }
+     }
+
    TP_Panel_Update();
   }
 

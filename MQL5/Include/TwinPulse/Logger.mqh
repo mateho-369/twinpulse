@@ -18,10 +18,14 @@ void TP_LogFileWrite(const string line)
   {
    if(!EnableFileLog) return;
 
-   int handle = FileOpen(TP_LOG_FILE, FILE_READ | FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ, 0, FILE_COMMON);
+   //--- FILE_COMMON is a FLAG of open_flags: FileOpen(name, flags,
+   //--- delimiter, codepage). A misplaced FILE_COMMON as the 4th
+   //--- argument is used as the codepage and the file lands in the
+   //--- local MQL5\Files instead of Common\Files (empty in the tester).
+   int handle = FileOpen(TP_LOG_FILE, FILE_READ | FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ | FILE_COMMON, ',', CP_ACP);
    bool created = (handle == INVALID_HANDLE);
    if(created)
-      handle = FileOpen(TP_LOG_FILE, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ, 0, FILE_COMMON);
+      handle = FileOpen(TP_LOG_FILE, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ | FILE_COMMON, ',', CP_ACP);
    if(handle == INVALID_HANDLE) return;
 
    if(created)
@@ -29,9 +33,9 @@ void TP_LogFileWrite(const string line)
 
    if(FileSize(handle) > TP_LOG_MAX_BYTES)
      {
-      FileClose((int)handle);
+      FileClose(handle);
       FileDelete(TP_LOG_FILE, FILE_COMMON);
-      handle = FileOpen(TP_LOG_FILE, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ, 0, FILE_COMMON);
+      handle = FileOpen(TP_LOG_FILE, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ | FILE_COMMON, ',', CP_ACP);
       if(handle == INVALID_HANDLE) return;
       FileWriteString(handle, "time,level,symbol,magic,message\n");
      }
@@ -93,10 +97,11 @@ void TP_CsvAppend(const string fileName, const string header, const string line)
   {
    if(!WriteCsvLogs) return;
 
-   int handle = FileOpen(fileName, FILE_READ | FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ, 0, FILE_COMMON);
+   //--- FILE_COMMON belongs to open_flags, see TP_LogFileWrite --------
+   int handle = FileOpen(fileName, FILE_READ | FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ | FILE_COMMON, ',', CP_ACP);
    bool created = (handle == INVALID_HANDLE);
    if(created)
-      handle = FileOpen(fileName, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ, 0, FILE_COMMON);
+      handle = FileOpen(fileName, FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_SHARE_READ | FILE_COMMON, ',', CP_ACP);
    if(handle == INVALID_HANDLE) return;
 
    if(created)
