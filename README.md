@@ -13,14 +13,16 @@ Pure MQL5, no DLL, no WebRequest, no Python inside the EA.
 2. Copy `MQL5\Profiles\Tester\*.set` into `<data>\MQL5\Profiles\Tester\`.
 3. Compile: `"<MT5>\metaeditor64.exe" /compile:"<data>\MQL5\Experts\TwinPulse\TwinPulse.mq5" /log` (0 errors).
 4. Run `TwinPulseSelfTest` on any chart - every line must print `PASS`.
-5. Run `TwinPulseNewsExport` once on a live XAUUSDm chart (writes `Common\Files\TwinPulse_news.csv`).
-6. Open an XAUUSDm M5 chart once, then run `"<MT5>\terminal64.exe" /config:"<repo>\tester\backtest_full.ini"`.
-7. Repeat step 6 for `backtest_pure.ini`, `backtest_oneside.ini` and `optimize_full.ini`.
-8. Attach `TwinPulse` to XAUUSDm M5, switch **Algo Trading ON**, inputs = `Default.set`.
-9. Keep the account on **Demo** until the gates in `docs/DESIGN.md` (section 9) are green.
-10. Only then set `AllowLive = true` by hand, on a small account.
+5. Run `TwinPulseNewsExport` once on a live XAUUSDm chart **before any tester run** (writes `Common\Files\TwinPulse_news.csv`; without it the tester prints `TwinPulse_news.csv not found in Common\Files - news filter OFF`).
+6. Create the report folder `mkdir "<data>\reports"` (every tester `.ini` writes `Report=reports\...` and needs it).
+7. Open an XAUUSDm M5 chart once, then run `"<MT5>\terminal64.exe" /config:"<repo>\tester\backtest_full.ini"`.
+8. Repeat step 7 for `backtest_pure.ini`, `backtest_oneside.ini` and `optimize_full.ini`.
+9. Attach `TwinPulse` to XAUUSDm M5, switch **Algo Trading ON**, inputs = `Default.set`.
+10. Keep the account on **Demo** until the gates in `docs/DESIGN.md` (section 9) are green.
+11. Only then set `AllowLive = true` by hand, on a small account.
 
-The full step by step guide is in `docs/WINDOWS_RUNBOOK_KM.md` (Khmer) and
+The full step by step guide is in `docs/WINDOWS_RUNBOOK.md` (English) and
+`docs/WINDOWS_RUNBOOK_KM.md` (Khmer); the user guide is
 `docs/USER_GUIDE_KM.md` (Khmer).
 
 ## What is in the box
@@ -48,6 +50,7 @@ docs/DESIGN.md                               state machine, every input, risk ex
 docs/DECISIONS.md                            every decision and every ambiguity
 docs/COMPILE_CHECKLIST.md                    the self review of every source file
 docs/USER_GUIDE_KM.md                        user guide in Khmer
+docs/WINDOWS_RUNBOOK.md                      install and test runbook in English
 docs/WINDOWS_RUNBOOK_KM.md                   install and test runbook in Khmer
 ```
 

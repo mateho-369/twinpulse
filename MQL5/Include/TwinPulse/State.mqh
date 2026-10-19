@@ -28,7 +28,9 @@ struct TpLegState
    double             peakPrice;    // best price seen, used for the trailing
    double             realized;     // realized money of this leg
    bool               wasOpen;      // previous snapshot, used to detect closes
-   datetime           lastModify;   // last time the stop was moved
+   datetime           lastModify;   // last stop modification ATTEMPT (success or failure)
+   int                modifyFails;  // consecutive failed stop modifications
+   datetime           modifyBackoff; // no stop modification before this time
   };
 
 //--- global EA state --------------------------------------------------
@@ -71,8 +73,20 @@ struct TpState
    TpLegState legs[TP_LEG_COUNT];
   };
 
+//--- execution counters for the tester summary in OnDeinit ------------
+struct TpStats
+  {
+   int       modifyAttempts;  // stop modifications that really sent a request
+   int       modifyFailures;  // failed stop modifications
+   int       closeAttempts;   // close / partial close / Close By requests sent
+   int       closeFailures;   // failed close requests
+   int       closeByCount;    // executed Close By nettings
+   int       stopThrough;     // legs closed with the exit reason STOP_THROUGH
+  };
+
 //--- the single global state object ----------------------------------
 TpState g_tp;
+TpStats g_stats;
 
 //+------------------------------------------------------------------+
 //| TP_State_Init - reset the volatile state                          |
@@ -113,6 +127,13 @@ void TP_State_Init(void)
    g_tp.tradeAllowed  = true;
    g_tp.blockReason   = "";
 
+   g_stats.modifyAttempts = 0;
+   g_stats.modifyFailures = 0;
+   g_stats.closeAttempts  = 0;
+   g_stats.closeFailures  = 0;
+   g_stats.closeByCount   = 0;
+   g_stats.stopThrough    = 0;
+
    for(int i = 0; i < TP_LEG_COUNT; i++)
      {
       g_tp.legs[i].used       = false;
@@ -132,6 +153,8 @@ void TP_State_Init(void)
       g_tp.legs[i].realized   = 0.0;
       g_tp.legs[i].wasOpen    = false;
       g_tp.legs[i].lastModify = 0;
+      g_tp.legs[i].modifyFails = 0;
+      g_tp.legs[i].modifyBackoff = 0;
      }
   }
 

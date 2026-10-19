@@ -13,6 +13,20 @@
 #include "Logger.mqh"
 #include "State.mqh"
 
+//--- result of a close request ----------------------------------------
+//| OK      : the request was sent and executed                        |
+//| GONE    : nothing was sent, the position is already closed         |
+//| NOPAIR  : nothing was sent, the request is invalid (a Close By     |
+//|           pair that cannot be netted, a zero volume, ...)          |
+//| FAIL    : the request was sent and failed                          |
+enum ENUM_TP_CLOSE_RESULT
+  {
+   TP_CLOSE_OK      = 0,
+   TP_CLOSE_GONE    = 1,
+   TP_CLOSE_NOPAIR  = 2,
+   TP_CLOSE_FAIL    = 3
+  };
+
 //+------------------------------------------------------------------+
 //| TP_Exec_FillingMode - filling mode accepted by the broker         |
 //+------------------------------------------------------------------+
@@ -121,10 +135,13 @@ bool TP_Exec_SendRequest(MqlTradeRequest &request, MqlTradeResult &result, const
 
       if(!g_trade.OrderSend(request, result))
         {
-         uint rc = g_trade.ResultRetcode();
+         //--- the OrderSend(request, result) overload fills only the local
+         //--- result struct, g_trade.ResultRetcode() is stale here
+         uint rc = result.retcode;
+         if(rc == 0) rc = (uint)GetLastError();
          if(!TP_Exec_Retriable(rc))
            {
-            TP_LogError(StringFormat("%s failed: %u (%s)", what, rc, g_trade.ResultRetcodeDescription()));
+            TP_LogError(StringFormat("%s failed: %u (%s)", what, rc, result.comment));
             return false;
            }
         }
@@ -155,7 +172,7 @@ bool TP_Exec_SendRequest(MqlTradeRequest &request, MqlTradeResult &result, const
             continue;
            }
 
-         TP_LogError(StringFormat("%s failed: %u (%s)", what, rc, g_trade.ResultRetcodeDescription()));
+         TP_LogError(StringFormat("%s failed: %u (%s)", what, rc, result.comment));
          return false;
         }
 
@@ -261,64 +278,185 @@ bool TP_Exec_OpenLeg(const int legIndex, const double volume, const double sl, c
   }
 
 //+------------------------------------------------------------------+
-//| TP_Exec_CloseLeg - close a full position                           |
+//| TP_Exec_NoteGone - a position is already closed (server SL/TP, an |
+//| earlier Close By or a manual close). Mark the leg closed, rebuild |
+//| the map, do not log a failure: the next TP_Legs_DetectClosedLegs  |
+//| books the realised money with the reason "server_close".          |
 //+------------------------------------------------------------------+
-bool TP_Exec_CloseLeg(const ulong ticket)
+void TP_Exec_NoteGone(const ulong ticket)
   {
-   if(ticket == 0) return false;
-   if(!g_trade.PositionClose(ticket))
+   for(int i = 0; i < TP_LEG_COUNT; i++)
      {
-      uint rc = g_trade.ResultRetcode();
-      TP_LogWarn(StringFormat("Close of ticket %I64u failed: %u (%s)", ticket, rc,
-                              g_trade.ResultRetcodeDescription()));
-      return false;
+      if(g_tp.legs[i].open && g_tp.legs[i].ticket == ticket)
+        {
+         g_tp.legs[i].open = false;
+         TP_LogInfo(StringFormat("%s: ticket %I64u is already closed, no request sent.",
+                                 TP_LegName(i), ticket));
+         break;
+        }
      }
-   return true;
+   TP_State_SyncPositions();
+  }
+
+//+------------------------------------------------------------------+
+//| TP_Exec_CloseLeg - close a full position                           |
+//|  A position that no longer exists is reported as TP_CLOSE_GONE,   |
+//|  nothing is sent and no failure is logged.                        |
+//+------------------------------------------------------------------+
+ENUM_TP_CLOSE_RESULT TP_Exec_CloseLeg(const ulong ticket)
+  {
+   if(ticket == 0) return TP_CLOSE_GONE;
+   if(!PositionSelectByTicket(ticket))
+     {
+      TP_Exec_NoteGone(ticket);
+      return TP_CLOSE_GONE;
+     }
+
+   //--- drop the stale retcode of the previous request, so a call that |
+   //--- sends nothing can be told from a request that really failed   --
+   g_trade.ClearStructures();
+   bool ok = g_trade.PositionClose(ticket);
+   uint rc = g_trade.ResultRetcode();
+   bool sent = (ok || rc != 0);
+   if(!sent)
+     {
+      //--- CTrade::PositionClose returns false without sending anything
+      //--- when the position vanished between the check and the send
+      TP_Exec_NoteGone(ticket);
+      return TP_CLOSE_GONE;
+     }
+
+   g_stats.closeAttempts++;
+   if(ok) return TP_CLOSE_OK;
+
+   g_stats.closeFailures++;
+   TP_LogWarn(StringFormat("Close of ticket %I64u failed: %u (%s)", ticket, rc,
+                           g_trade.ResultRetcodeDescription()));
+   return TP_CLOSE_FAIL;
   }
 
 //+------------------------------------------------------------------+
 //| TP_Exec_CloseBy - close two opposite positions against each other  |
+//|  Both tickets must exist, be opposite, on the same symbol and with |
+//|  the same magic, otherwise nothing is sent.                       |
 //+------------------------------------------------------------------+
-bool TP_Exec_CloseBy(const ulong ticket1, const ulong ticket2)
+ENUM_TP_CLOSE_RESULT TP_Exec_CloseBy(const ulong ticket1, const ulong ticket2)
   {
-   if(ticket1 == 0 || ticket2 == 0 || ticket1 == ticket2) return false;
-   if(!g_trade.PositionCloseBy(ticket1, ticket2))
+   if(ticket1 == 0 || ticket2 == 0 || ticket1 == ticket2) return TP_CLOSE_NOPAIR;
+
+   //--- both tickets must exist ---------------------------------------
+   bool   alive1 = PositionSelectByTicket(ticket1);
+   bool   buy1   = false;
+   string sym1   = "";
+   long   magic1 = 0;
+   if(alive1)
      {
-      uint rc = g_trade.ResultRetcode();
-      TP_LogWarn(StringFormat("Close By %I64u / %I64u failed: %u (%s)", ticket1, ticket2, rc,
-                              g_trade.ResultRetcodeDescription()));
-      return false;
+      buy1   = ((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY);
+      sym1   = PositionGetString(POSITION_SYMBOL);
+      magic1 = (long)PositionGetInteger(POSITION_MAGIC);
      }
-   TP_LogInfo(StringFormat("Close By executed: %I64u / %I64u", ticket1, ticket2));
-   return true;
+
+   bool   alive2 = PositionSelectByTicket(ticket2);
+   bool   buy2   = false;
+   string sym2   = "";
+   long   magic2 = 0;
+   if(alive2)
+     {
+      buy2   = ((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY);
+      sym2   = PositionGetString(POSITION_SYMBOL);
+      magic2 = (long)PositionGetInteger(POSITION_MAGIC);
+     }
+
+   if(!alive1 || !alive2)
+     {
+      if(!alive1) TP_Exec_NoteGone(ticket1);
+      if(!alive2) TP_Exec_NoteGone(ticket2);
+      return TP_CLOSE_GONE;
+     }
+
+   //--- opposite types, same symbol, same magic ----------------------
+   if(buy1 == buy2 || sym1 != sym2 || sym1 != g_symbol ||
+      magic1 != magic2 || magic1 != g_magic)
+      return TP_CLOSE_NOPAIR;
+
+   g_trade.ClearStructures();
+   bool ok = g_trade.PositionCloseBy(ticket1, ticket2);
+   uint rc = g_trade.ResultRetcode();
+   bool sent = (ok || rc != 0);
+   if(!sent)
+     {
+      TP_Exec_NoteGone(ticket1);
+      TP_Exec_NoteGone(ticket2);
+      return TP_CLOSE_GONE;
+     }
+
+   g_stats.closeAttempts++;
+   if(ok)
+     {
+      g_stats.closeByCount++;
+      TP_LogInfo(StringFormat("Close By executed: %I64u / %I64u", ticket1, ticket2));
+      return TP_CLOSE_OK;
+     }
+
+   g_stats.closeFailures++;
+   TP_LogWarn(StringFormat("Close By %I64u / %I64u failed: %u (%s)", ticket1, ticket2, rc,
+                           g_trade.ResultRetcodeDescription()));
+   return TP_CLOSE_FAIL;
   }
 
 //+------------------------------------------------------------------+
 //| TP_Exec_PartialClose - close a part of a position                  |
 //+------------------------------------------------------------------+
-bool TP_Exec_PartialClose(const ulong ticket, const double volume)
+ENUM_TP_CLOSE_RESULT TP_Exec_PartialClose(const ulong ticket, const double volume)
   {
-   if(ticket == 0 || volume <= 0.0) return false;
-   if(!g_trade.PositionClosePartial(ticket, volume))
+   if(ticket == 0 || volume <= 0.0) return TP_CLOSE_NOPAIR;
+   if(!PositionSelectByTicket(ticket))
      {
-      uint rc = g_trade.ResultRetcode();
-      TP_LogWarn(StringFormat("Partial close of %I64u (%.2f) failed: %u (%s)", ticket, volume, rc,
-                              g_trade.ResultRetcodeDescription()));
-      return false;
+      TP_Exec_NoteGone(ticket);
+      return TP_CLOSE_GONE;
      }
-   TP_LogInfo(StringFormat("Partial close: ticket %I64u volume %.2f", ticket, volume));
-   return true;
+
+   g_trade.ClearStructures();
+   bool ok = g_trade.PositionClosePartial(ticket, volume);
+   uint rc = g_trade.ResultRetcode();
+   bool sent = (ok || rc != 0);
+   if(!sent)
+     {
+      TP_Exec_NoteGone(ticket);
+      return TP_CLOSE_GONE;
+     }
+
+   g_stats.closeAttempts++;
+   if(ok)
+     {
+      TP_LogInfo(StringFormat("Partial close: ticket %I64u volume %.2f", ticket, volume));
+      return TP_CLOSE_OK;
+     }
+
+   g_stats.closeFailures++;
+   TP_LogWarn(StringFormat("Partial close of %I64u (%.2f) failed: %u (%s)", ticket, volume, rc,
+                           g_trade.ResultRetcodeDescription()));
+   return TP_CLOSE_FAIL;
   }
 
 //+------------------------------------------------------------------+
 //| TP_Exec_ModifySL - change the stop loss (and optionally the TP)   |
-//|  The stop is never moved further away from the market.             |
+//|  The stop is never moved further away from the market. The caller  |
+//|  has already clamped the stop into the legal region (TP_ClampStop)|
+//|  and validated it against the freeze level.                       |
+//|  The retcode and the comment are always read from the local       |
+//|  result struct: the OrderSend(request, result) overload does not  |
+//|  fill g_trade.ResultRetcode(), that value is stale.               |
 //+------------------------------------------------------------------+
 bool TP_Exec_ModifySL(const ulong ticket, const double newSl, const double newTp)
   {
    if(ticket == 0) return false;
    if(!g_pos.SelectByTicket(ticket))
+     {
+      //--- the position vanished (server SL/TP): mark the leg gone ---
+      TP_Exec_NoteGone(ticket);
       return false;
+     }
 
    double curSl = g_pos.StopLoss();
    double curTp = g_pos.TakeProfit();
@@ -353,35 +491,36 @@ bool TP_Exec_ModifySL(const ulong ticket, const double newSl, const double newTp
    request.type_filling = TP_Exec_FillingMode();
    request.type_time  = ORDER_TIME_GTC;
 
-   if(!g_trade.OrderSend(request, result))
+   //--- one logical attempt: the requote retry belongs to it ---------
+   g_stats.modifyAttempts++;
+
+   for(int attempt = 1; attempt <= 2; attempt++)
      {
-      uint rc = g_trade.ResultRetcode();
-      if(rc == TRADE_RETCODE_NO_CHANGES) return true;
-      if(TP_Exec_Retriable(rc))
+      ZeroMemory(result);
+      bool ok = g_trade.OrderSend(request, result);
+      //--- the local result struct is the only truth after the call --
+      uint rc = result.retcode;
+      if(rc == 0 && !ok) rc = (uint)GetLastError();
+
+      if(ok && (rc == 0 || rc == TRADE_RETCODE_DONE ||
+                rc == TRADE_RETCODE_DONE_PARTIAL || rc == TRADE_RETCODE_PLACED))
+         return true;
+      if(rc == TRADE_RETCODE_NO_CHANGES)
+         return true;
+
+      if(TP_Exec_Retriable(rc) && attempt == 1)
         {
          Sleep(100);
-         if(!g_trade.OrderSend(request, result))
-           {
-            rc = g_trade.ResultRetcode();
-            TP_LogWarn(StringFormat("SL modify of %I64u failed: %u (%s)", ticket, rc,
-                                    g_trade.ResultRetcodeDescription()));
-            return false;
-           }
-         return true;
+         continue;
         }
-      TP_LogWarn(StringFormat("SL modify of %I64u failed: %u (%s)", ticket, rc,
-                              g_trade.ResultRetcodeDescription()));
+
+      g_stats.modifyFailures++;
+      TP_LogWarn(StringFormat("SL modify of %I64u failed: %u (%s)", ticket, rc, result.comment));
       return false;
      }
 
-   if(result.retcode != 0 && result.retcode != TRADE_RETCODE_DONE)
-     {
-      if(result.retcode == TRADE_RETCODE_NO_CHANGES) return true;
-      TP_LogWarn(StringFormat("SL modify of %I64u: %u (%s)", ticket, result.retcode,
-                              g_trade.ResultRetcodeDescription()));
-      return false;
-     }
-   return true;
+   g_stats.modifyFailures++;
+   return false;
   }
 
 #endif // TP_EXECUTION_MQH

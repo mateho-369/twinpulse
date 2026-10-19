@@ -3,6 +3,59 @@
 All notable changes of the TwinPulse Hedge EA.
 The format follows `Keep a Changelog`, the project uses semantic versioning.
 
+## [Unreleased]
+
+### Fixed
+
+* Stop modifications ("Invalid stops" flood): every trailing / break-even
+  stop is now validated before it is sent. The new pure helper
+  `TP_ClampStop` clamps the stop into the legal region
+  (`SYMBOL_TRADE_STOPS_LEVEL` / `SYMBOL_TRADE_FREEZE_LEVEL`), a stop that
+  does not improve the current one is not sent at all, and when the price
+  already came back through the desired stop the leg is closed at the
+  market with the exit reason `STOP_THROUGH` instead of sending an invalid
+  modify. `FREEZE_LEVEL` is respected (no modify inside the freeze zone).
+* `beDone` is set only after a **successful** stop modification (it was set
+  before the request, so a failed modify was never retried correctly).
+  The break-even trigger is latched on the peak profit, so a pull back does
+  not disarm it.
+* Every stop modify attempt (success or failure) is throttled to one per
+  two seconds; after `TP_MODIFY_MAX_FAILS` (3) consecutive failures of a
+  ticket the EA backs off for `TP_MODIFY_BACKOFF_SEC` (60) seconds and logs
+  it once (the old code retried a failing modify on every tick).
+* Wrong retcodes in the logs ("failed: 10009 (done)"): after
+  `g_trade.OrderSend(request, result)` the code read
+  `g_trade.ResultRetcode()`, which is not filled by that overload and
+  always showed the stale code of the previous operation. Every `OrderSend`
+  now reads `result.retcode` / `result.comment` (with a `GetLastError()`
+  fallback) and `g_trade.ResultRetcode()` is only used when a request was
+  really sent (`ClearStructures()` + non-zero retcode check).
+* Ghost close failures ("Close of ticket ... failed: 10009 (done)",
+  "Close By ... failed"): `CTrade::PositionClose/PositionCloseBy/...`
+  return `false` without sending anything when the position is already
+  gone (server SL/TP or an earlier Close By). Every close / partial close /
+  Close By now checks `PositionSelectByTicket` first; a vanished ticket
+  marks the leg closed, resyncs the state (`TP_State_SyncPositions`) and is
+  booked by `TP_Legs_DetectClosedLegs` as `server_close` - **no failure is
+  logged**. Before a Close By both tickets are verified (both exist,
+  opposite types, same symbol, same magic), otherwise the winner is closed
+  normally.
+
+### Added
+
+* `OnDeinit` prints an `exec summary` with the counters for the smoke test:
+  modify attempts / failures, closes / failures, Close By count and
+  `STOP_THROUGH` exits.
+* SelfTest cases for the new pure stop helpers (`TP_StopMinDistance`,
+  `TP_ClampStop`, `TP_StopThroughMarket`, `TP_StopIsBetter`,
+  `TP_StopFrozen`), including the exact "Invalid stops" scenario of the
+  smoke test log.
+* `docs/WINDOWS_RUNBOOK.md` (English). The Khmer runbook
+  `docs/WINDOWS_RUNBOOK_KM.md` now states the two hard preconditions of
+  every tester run: run `TwinPulseNewsExport` once on a live chart first
+  (missing file prints "TwinPulse_news.csv not found in Common\Files -
+  news filter OFF"), and create `<DATA>\reports` before any tester `.ini`.
+
 ## [1.00] - 2026-10-17
 
 ### Added

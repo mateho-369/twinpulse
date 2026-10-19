@@ -163,7 +163,7 @@ int OnInit()
   }
 
 //+------------------------------------------------------------------+
-//| OnDeinit - clean up                                               |
+//| OnDeinit - clean up and print the execution summary               |
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
   {
@@ -172,6 +172,16 @@ void OnDeinit(const int reason)
    TP_Regime_Release();
    TP_Panel_Release();
    TP_LogInfo(StringFormat("TwinPulse stopped, reason %d.", reason));
+
+   //--- execution counters: the smoke test proof for the stop / close -
+   //--- fixes. Print() so the lines land in the tester journal.       --
+   string execSummary = StringFormat(
+      "exec summary: modify attempts %d, modify failures %d, closes %d, close failures %d, Close By %d, STOP_THROUGH %d",
+      g_stats.modifyAttempts, g_stats.modifyFailures,
+      g_stats.closeAttempts, g_stats.closeFailures,
+      g_stats.closeByCount, g_stats.stopThrough);
+   Print("TwinPulse | ", execSummary);
+   TP_LogInfo(execSummary);
   }
 
 //+------------------------------------------------------------------+

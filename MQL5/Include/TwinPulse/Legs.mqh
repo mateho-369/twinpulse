@@ -276,6 +276,13 @@ bool TP_Legs_OpenOne(const int legIndex, const bool isReopen)
       g_tp.lastOpen = TimeCurrent();
 
    g_tp.legs[legIndex].used = true;
+
+   //--- fresh execution state for the new position -------------------
+   g_tp.legs[legIndex].beDone        = false;
+   g_tp.legs[legIndex].peakPrice     = 0.0;
+   g_tp.legs[legIndex].lastModify    = 0;
+   g_tp.legs[legIndex].modifyFails   = 0;
+   g_tp.legs[legIndex].modifyBackoff = 0;
    return true;
   }
 
@@ -322,6 +329,8 @@ void TP_Legs_DetectClosedLegs(void)
 //| TP_Legs_CloseWinner - close a leg that reached its target          |
 //|  When the opposite leg of the same slot shows a positive combined |
 //|  result the pair is closed with Close By, that saves one spread.   |
+//|  A leg that is already gone is booked by TP_Legs_DetectClosedLegs,|
+//|  a failed request is logged by the execution layer.               |
 //+------------------------------------------------------------------+
 void TP_Legs_CloseWinner(const int legIndex)
   {
@@ -339,22 +348,29 @@ void TP_Legs_CloseWinner(const int legIndex)
         {
          TP_LogInfo(StringFormat("Close By: %s and %s, combined %.2f >= %.2f",
                                  TP_LegName(legIndex), TP_LegName(mirror), combined, need));
-         if(TP_Exec_CloseBy(ticket, g_tp.legs[mirror].ticket))
+         ENUM_TP_CLOSE_RESULT r = TP_Exec_CloseBy(ticket, g_tp.legs[mirror].ticket);
+         if(r == TP_CLOSE_OK)
            {
             TP_Legs_RegisterClose(legIndex, "closeby_winner", 0.0);
             TP_Legs_RegisterClose(mirror, "closeby_loser", 0.0);
             return;
            }
-         TP_LogWarn("Close By failed, the winner is closed alone.");
+         if(r == TP_CLOSE_FAIL)
+            TP_LogWarn("Close By failed, the winner is closed alone.");
+         //--- GONE / NOPAIR: fall back to a normal close of the winner
         }
      }
 
-   if(TP_Exec_CloseLeg(ticket))
+   if(TP_Exec_CloseLeg(ticket) == TP_CLOSE_OK)
       TP_Legs_RegisterClose(legIndex, "target", 0.0);
   }
 
 //+------------------------------------------------------------------+
 //| TP_Legs_ManageRunner - break even and trailing of the leg B        |
+//|  The desired stop is validated against the market and the broker  |
+//|  stops / freeze levels before a modify is sent. When the price    |
+//|  already came back through the desired stop, the leg is closed at |
+//|  the market with the exit reason STOP_THROUGH.                    |
 //+------------------------------------------------------------------+
 void TP_Legs_ManageRunner(const int legIndex)
   {
@@ -383,49 +399,91 @@ void TP_Legs_ManageRunner(const int legIndex)
      }
    g_tp.legs[legIndex].peakPrice = best;
 
-   double newSl = g_tp.legs[legIndex].sl;
    double currentSl = g_tp.legs[legIndex].sl;
 
-   //--- break even ----------------------------------------------------
-   double beDist = BE_ATR * atr;
-   double moved = isBuy ? (tick.bid - entry) : (entry - tick.ask);
-   if(!g_tp.legs[legIndex].beDone && moved >= beDist)
-     {
-      double beSl = isBuy ? (entry + spread) : (entry - spread);
-      if(currentSl <= 0.0 || (isBuy && beSl > currentSl) || (!isBuy && (beSl < currentSl || currentSl <= 0.0)))
-        {
-         newSl = TP_Exec_NormalizePrice(beSl);
-         g_tp.legs[legIndex].beDone = true;
-         TP_LogInfo(StringFormat("%s: break even stop moved to %s", TP_LegName(legIndex),
-                                 TP_Str(newSl, g_digits)));
-        }
-     }
+   //--- the stop we would like to have --------------------------------
+   //--- the break even trigger uses the peak, so it stays armed after
+   //--- a pull back until the stop is really placed (beDone)
+   double desiredSl  = 0.0;
+   double beDist     = BE_ATR * atr;
+   double peakMoved  = isBuy ? (best - entry) : (entry - best);
 
-   //--- trailing ------------------------------------------------------
-   double trailDist = Trail_ATR * atr;
-   double trailSl = isBuy ? (best - trailDist) : (best + trailDist);
    if(g_tp.legs[legIndex].beDone)
      {
-      if(currentSl <= 0.0 || (isBuy && trailSl > currentSl) || (!isBuy && trailSl < currentSl))
-         newSl = TP_Exec_NormalizePrice(trailSl);
+      //--- trailing after the break even stop was placed -------------
+      double trailDist = Trail_ATR * atr;
+      desiredSl = isBuy ? (best - trailDist) : (best + trailDist);
      }
-
-   if(newSl <= 0.0) return;
-   if(currentSl > 0.0)
+   else if(peakMoved >= beDist)
      {
-      if(isBuy && newSl <= currentSl) return;      // never widen
-      if(!isBuy && newSl >= currentSl) return;
+      //--- break even: the entry plus the spread ---------------------
+      desiredSl = isBuy ? (entry + spread) : (entry - spread);
      }
 
-   //--- throttle: at most one stop modification every two seconds ----
-   if(g_tp.legs[legIndex].lastModify > 0 &&
-      (TimeCurrent() - g_tp.legs[legIndex].lastModify) < 2)
+   if(desiredSl <= 0.0) return;
+
+   //--- the price came back through the desired stop: the modify would
+   //--- be invalid, close the leg at the market instead ---------------
+   if(TP_StopThroughMarket(isBuy, desiredSl, tick.bid, tick.ask))
+     {
+      TP_LogInfo(StringFormat("STOP_THROUGH: %s stop %s is beyond the market (bid %s, ask %s), closing at the market.",
+                              TP_LegName(legIndex), TP_Str(desiredSl, g_digits),
+                              TP_Str(tick.bid, g_digits), TP_Str(tick.ask, g_digits)));
+      g_stats.stopThrough++;
+      if(TP_Exec_CloseLeg(g_tp.legs[legIndex].ticket) == TP_CLOSE_OK)
+         TP_Legs_RegisterClose(legIndex, "STOP_THROUGH", 0.0);
+      return;
+     }
+
+   //--- throttle: at most one stop modification every two seconds, ---
+   //--- counted for every ATTEMPT (success or failure), and a 60 s ---
+   //--- back off after TP_MODIFY_MAX_FAILS consecutive failures ------
+   datetime now = TimeCurrent();
+   if(g_tp.legs[legIndex].lastModify > 0 && (now - g_tp.legs[legIndex].lastModify) < 2)
+      return;
+   if(g_tp.legs[legIndex].modifyBackoff > now)
       return;
 
-   if(TP_Exec_ModifySL(g_tp.legs[legIndex].ticket, newSl, g_tp.legs[legIndex].tp))
+   //--- FREEZE_LEVEL: no modify while the price is close to the ------
+   //--- current SL or TP ---------------------------------------------
+   long stopsLevel  = SymbolInfoInteger(g_symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   long freezeLevel = SymbolInfoInteger(g_symbol, SYMBOL_TRADE_FREEZE_LEVEL);
+   double market    = isBuy ? tick.bid : tick.ask;
+   if(TP_StopFrozen(market, currentSl, freezeLevel, g_point) ||
+      TP_StopFrozen(market, g_tp.legs[legIndex].tp, freezeLevel, g_point))
+      return;
+
+   //--- clamp the stop into the legal region of the broker -----------
+   double clampedSl = TP_Exec_NormalizePrice(
+                        TP_ClampStop(isBuy, desiredSl, tick.bid, tick.ask,
+                                     stopsLevel, freezeLevel, g_point));
+
+   //--- a stop that does not improve the current one is not sent -----
+   if(!TP_StopIsBetter(isBuy, clampedSl, currentSl))
+      return;
+
+   if(TP_Exec_ModifySL(g_tp.legs[legIndex].ticket, clampedSl, g_tp.legs[legIndex].tp))
      {
-      g_tp.legs[legIndex].sl = newSl;
+      g_tp.legs[legIndex].sl            = clampedSl;
+      g_tp.legs[legIndex].beDone        = true;   // only after a successful modify
+      g_tp.legs[legIndex].lastModify    = TimeCurrent();
+      g_tp.legs[legIndex].modifyFails   = 0;
+      g_tp.legs[legIndex].modifyBackoff = 0;
+      TP_LogInfo(StringFormat("%s: stop moved to %s", TP_LegName(legIndex),
+                              TP_Str(clampedSl, g_digits)));
+     }
+   else
+     {
+      //--- throttle every attempt, success or failure ----------------
       g_tp.legs[legIndex].lastModify = TimeCurrent();
+      g_tp.legs[legIndex].modifyFails++;
+      if(g_tp.legs[legIndex].modifyFails >= TP_MODIFY_MAX_FAILS)
+        {
+         g_tp.legs[legIndex].modifyFails   = 0;
+         g_tp.legs[legIndex].modifyBackoff = TimeCurrent() + TP_MODIFY_BACKOFF_SEC;
+         TP_LogWarn(StringFormat("%s: stop modify failed %d times in a row, no stop modification for %d s.",
+                                 TP_LegName(legIndex), TP_MODIFY_MAX_FAILS, TP_MODIFY_BACKOFF_SEC));
+        }
      }
   }
 
@@ -445,7 +503,7 @@ void TP_Legs_Update(void)
          if(!TP_Bank_TryShred())
            {
             TP_LogInfo(StringFormat("Time stop: %s is %.0f minutes old, closing it.", TP_LegName(i), age));
-            if(TP_Exec_CloseLeg(g_tp.legs[i].ticket))
+            if(TP_Exec_CloseLeg(g_tp.legs[i].ticket) == TP_CLOSE_OK)
                TP_Legs_RegisterClose(i, "time_stop", 0.0);
            }
          continue;
@@ -535,6 +593,9 @@ void TP_Legs_TryStartCycle(void)
       g_tp.legs[i].beDone     = false;
       g_tp.legs[i].realized   = 0.0;
       g_tp.legs[i].peakPrice  = 0.0;
+      g_tp.legs[i].lastModify    = 0;
+      g_tp.legs[i].modifyFails   = 0;
+      g_tp.legs[i].modifyBackoff = 0;
      }
 
    int opened = 0;
@@ -616,7 +677,7 @@ void TP_Legs_CloseCycle(const string reason)
       if(!g_tp.legs[buyLeg].open || !g_tp.legs[sellLeg].open) continue;
       if(MathAbs(g_tp.legs[buyLeg].volume - g_tp.legs[sellLeg].volume) > 1e-8) continue;
 
-      if(TP_Exec_CloseBy(g_tp.legs[buyLeg].ticket, g_tp.legs[sellLeg].ticket))
+      if(TP_Exec_CloseBy(g_tp.legs[buyLeg].ticket, g_tp.legs[sellLeg].ticket) == TP_CLOSE_OK)
         {
          TP_Legs_RegisterClose(buyLeg,  "cycle_closeby", 0.0);
          TP_Legs_RegisterClose(sellLeg, "cycle_closeby", 0.0);
@@ -627,10 +688,12 @@ void TP_Legs_CloseCycle(const string reason)
    for(int i = 0; i < TP_LEG_COUNT; i++)
      {
       if(!g_tp.legs[i].open) continue;
-      if(TP_Exec_CloseLeg(g_tp.legs[i].ticket))
+      if(TP_Exec_CloseLeg(g_tp.legs[i].ticket) == TP_CLOSE_OK)
          TP_Legs_RegisterClose(i, "cycle_close", 0.0);
      }
 
+   //--- book the legs that were already gone before the close ---------
+   TP_Legs_DetectClosedLegs();
    TP_State_SyncPositions();
 
    TP_LogCycleCSV(g_tp.cycleId, g_tp.cycleStart, TimeCurrent(), TP_RegimeName(g_tp.cycleRegime),

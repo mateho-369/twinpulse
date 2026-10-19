@@ -1,0 +1,188 @@
+# TwinPulse Hedge EA - Windows Runbook (English)
+
+Step by step guide to install, compile and test the EA on a Windows PC.
+The full Khmer version is `docs/WINDOWS_RUNBOOK_KM.md`.
+
+**Two preconditions before ANY Strategy Tester run** (see sections 4 and 5):
+
+1. Run `TwinPulseNewsExport` once on a **live** chart so that
+   `Common\Files\TwinPulse_news.csv` exists. Without it the tester prints
+   `TwinPulse_news.csv not found in Common\Files - news filter OFF` and the
+   news filter is silently disabled for the whole run.
+2. The folder `<DATA>\reports` must **exist** before any tester `.ini` is
+   started (`mkdir "<DATA>\reports"`), because every `.ini` writes its report
+   to `Report=reports\...`.
+
+---
+
+## 0. Paths
+
+| Name | Path |
+|---|---|
+| `REPO` | the folder that contains `MQL5`, `dist`, `tester`, `docs` |
+| `<INSTALL>` | the MetaTrader 5 install folder, e.g. `C:\Program Files\MetaTrader 5` |
+| `<DATA>` | the terminal data folder - `File -> Open Data Folder`, then copy the path |
+
+Typical values:
+
+```
+REPO    = C:\TwinPulse
+INSTALL = C:\Program Files\MetaTrader 5
+DATA    = C:\Users\<user>\AppData\Roaming\MetaQuotes\Terminal\<HASH>
+```
+
+> Always use the data folder opened by **Open Data Folder** of the running
+> terminal, the `<HASH>` differs between terminals.
+
+---
+
+## 1. Copy the files into the terminal
+
+### 1.1 MQL5 sources
+
+```
+xcopy "<REPO>\MQL5\*" "<DATA>\MQL5\" /E /I /Y
+```
+
+This copies `MQL5\Experts\TwinPulse\TwinPulse.mq5`, the headers
+`MQL5\Include\TwinPulse\*.mqh` and the scripts `MQL5\Scripts\TwinPulse\`
+(`TwinPulseSelfTest.mq5`, `TwinPulseNewsExport.mq5`).
+
+### 1.2 Tester profiles
+
+```
+xcopy "<REPO>\MQL5\Profiles\Tester\*.set" "<DATA>\MQL5\Profiles\Tester\" /Y
+xcopy "<REPO>\MQL5\Profiles\Tester\*.set" "<INSTALL>\MQL5\Profiles\Tester\" /Y
+```
+
+### 1.3 Optional: single file build
+
+```
+copy "<REPO>\dist\TwinPulse_single.mq5" "<DATA>\MQL5\Experts\"
+```
+
+---
+
+## 2. Compile (0 errors required)
+
+```
+"<INSTALL>\metaeditor64.exe" /compile:"<DATA>\MQL5\Experts\TwinPulse\TwinPulse.mq5" /log
+"<INSTALL>\metaeditor64.exe" /compile:"<DATA>\MQL5\Scripts\TwinPulse\TwinPulseSelfTest.mq5" /log
+"<INSTALL>\metaeditor64.exe" /compile:"<DATA>\MQL5\Scripts\TwinPulse\TwinPulseNewsExport.mq5" /log
+"<INSTALL>\metaeditor64.exe" /compile:"<DATA>\MQL5\Experts\TwinPulse_single.mq5" /log
+```
+
+The compile log is written next to each source. **0 errors** are required
+(warnings are allowed but must be read).
+
+---
+
+## 3. Self test (every line must be PASS)
+
+1. Open any chart (e.g. EURUSD M1).
+2. Drag `TwinPulseSelfTest` from `Navigator -> Expert Advisors` onto the chart.
+3. Click **OK** (no Algo Trading needed for a script).
+4. The **Expert** tab must show `PASS` on every line and `ALL TESTS PASSED`.
+
+If any `FAIL` appears, do **not** use the EA and send the full output back.
+
+---
+
+## 4. News export - run ONCE on a live chart BEFORE any tester run
+
+> **Required before every tester run.** The Strategy Tester has no economic
+> calendar data. If `Common\Files\TwinPulse_news.csv` is missing, the tester
+> prints `TwinPulse_news.csv not found in Common\Files - news filter OFF`
+> and the news filter is switched off for the whole run, so the result does
+> not include the news blocks.
+
+1. Open a **XAUUSDm** chart on a live (or demo) account.
+2. Drag `TwinPulseNewsExport` from `Navigator -> Scripts` onto the chart.
+3. The script writes `Common\Files\TwinPulse_news.csv` (high impact USD
+   events from 2018 to now, server times).
+4. Verify the file exists: `File -> Open Data Folder -> MQL5\Files`, or
+   `<DATA>\..\Common\Files\TwinPulse_news.csv`.
+5. Re-run the script from time to time to refresh the event list.
+
+---
+
+## 5. Strategy Tester with the `.ini` files
+
+0. **Create the folder `<DATA>\reports` first** - every `.ini` writes its
+   report to `Report=reports\...` and the tester cannot save the report
+   (or does not start correctly) when the folder is missing:
+
+   ```
+   mkdir "<DATA>\reports"
+   ```
+
+   Also confirm that `Common\Files\TwinPulse_news.csv` exists (section 4).
+
+1. Open one **XAUUSDm M5** chart first (downloads the history).
+2. Run one of:
+
+   ```
+   "<INSTALL>\terminal64.exe" /config:"<REPO>\tester\backtest_full.ini"
+   "<INSTALL>\terminal64.exe" /config:"<REPO>\tester\backtest_pure.ini"
+   "<INSTALL>\terminal64.exe" /config:"<REPO>\tester\backtest_oneside.ini"
+   "<INSTALL>\terminal64.exe" /config:"<REPO>\tester\optimize_full.ini"
+   ```
+
+3. Wait for the terminal to finish (`ShutdownTerminal=1` closes it).
+4. The reports are written to `<DATA>\reports\`.
+
+> `ToDate=2026.09.30` in the `.ini` files is the last day of the month
+> before the build date. Update it when a newer period is wanted.
+
+After a smoke test, open the `Expert` journal of the tester and check the
+`exec summary` line printed by the EA in `OnDeinit`:
+
+```
+exec summary: modify attempts N, modify failures N, closes N, close failures N, Close By N, STOP_THROUGH N
+```
+
+With the stop/close fixes the modify failures and close failures must be
+near zero, and no `Invalid stops` flood may appear in the log.
+
+---
+
+## 6. Demo account (Exness)
+
+1. Open a **XAUUSDm M5** chart.
+2. Enable `Algo Trading` and `Allow live trading` in the EA dialog.
+3. Drag `TwinPulse` onto the chart and load `Default.set`.
+4. The red panel appears at the bottom left with the full state.
+
+Stay on the **Demo** account until every gate is confirmed.
+
+---
+
+## 7. Troubleshooting
+
+| Sign | Cause | Action |
+|---|---|---|
+| `TwinPulse_news.csv not found in Common\Files - news filter OFF` | news file missing in the tester | run `TwinPulseNewsExport` once on a live chart **before** the tester run (section 4) |
+| tester writes no report | `<DATA>\reports` missing | `mkdir "<DATA>\reports"` before running any `.ini` (section 5, step 0) |
+| **10030** (invalid fill) | filling mode mismatch | the EA picks the mode from `SYMBOL_FILLING_MODE` and retries with the next one; check the log with `VerboseLog=true` |
+| **10019** (no money) | not enough free margin | lower `BaseLot` / `MaxTotalLots`, `MinMarginLevelPct` also protects |
+| **"not hedging account"** | `ACCOUNT_MARGIN_MODE` is not `RETAIL_HEDGING` | open a hedging account; the EA never trades on netting |
+| **"Market closed"** | weekend or market close | the EA retries at the next open |
+| **"too many requests"** | too many orders | do not raise `MaxOrderRetries` / `TimerSeconds`; do not run several EAs on the same account |
+| tester does not start | history / `.ini` | open XAUUSDm M5 once, download history (`View -> Symbols`), check `ExpertParameters`, never use `Visual=1` with `/config` |
+| many `Invalid stops` / `SL modify ... failed` lines | this must not happen after the stop fixes | send the log back: it proves an unfixed execution bug |
+
+---
+
+## 8. Files to keep after a run
+
+| Folder | Content |
+|---|---|
+| `<DATA>\MQL5\Experts\TwinPulse\TwinPulse.ex5` | compiled EA |
+| `<DATA>\MQL5\Scripts\TwinPulse\TwinPulseSelfTest.ex5` | compiled self test |
+| `<DATA>\MQL5\Scripts\TwinPulse\TwinPulseNewsExport.ex5` | compiled news export |
+| `<DATA>\MQL5\Experts\TwinPulse_single.ex5` | compiled single file build |
+| `Common\Files\TwinPulse.log` | text log (includes the `exec summary`) |
+| `Common\Files\TwinPulse_legs.csv` | closed legs |
+| `Common\Files\TwinPulse_cycles.csv` | cycles |
+| `Common\Files\TwinPulse_news.csv` | exported news |
+| `<DATA>\reports\*.htm` | tester reports |

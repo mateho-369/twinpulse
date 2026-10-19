@@ -23,6 +23,10 @@
 #define TP_NEWS_CSV          "TwinPulse_news.csv"
 #define TP_GV_PREFIX         "TwinPulse_"
 
+//--- stop modification throttle --------------------------------------
+#define TP_MODIFY_MAX_FAILS  3          // consecutive failures before the back off
+#define TP_MODIFY_BACKOFF_SEC 60        // seconds without a modify after MAX_FAILS
+
 //--- leg indices -----------------------------------------------------
 #define TP_LEG_BUY_A         0
 #define TP_LEG_BUY_B         1

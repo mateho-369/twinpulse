@@ -64,6 +64,78 @@ bool TP_MoneyNearZero(const double value)
   }
 
 //+------------------------------------------------------------------+
+//| Stop helpers (pure). The broker rejects a stop that is too close  |
+//| to the market (SYMBOL_TRADE_STOPS_LEVEL) and freezes the modify   |
+//| of a level that is too close to it (SYMBOL_TRADE_FREEZE_LEVEL).   |
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| TP_StopMinDistance - minimum distance between the market and a    |
+//| stop level in price units: max(stops, freeze, 1) x point          |
+//+------------------------------------------------------------------+
+double TP_StopMinDistance(const long stopsLevelPts, const long freezeLevelPts, const double point)
+  {
+   long pts = stopsLevelPts;
+   if(freezeLevelPts > pts) pts = freezeLevelPts;
+   if(pts < 1) pts = 1;
+   return (double)pts * point;
+  }
+
+//+------------------------------------------------------------------+
+//| TP_ClampStop - clamp a desired stop loss into the legal region    |
+//| BUY : sl <= bid - max(stops, freeze, 1) x point                   |
+//| SELL: sl >= ask + max(stops, freeze, 1) x point                   |
+//| A stop that is already legal is kept unchanged, a stop that is    |
+//| too close to the market is only moved away from it.               |
+//+------------------------------------------------------------------+
+double TP_ClampStop(const bool isBuy, const double desiredSl, const double bid, const double ask,
+                    const long stopsLevelPts, const long freezeLevelPts, const double point)
+  {
+   double minDist = TP_StopMinDistance(stopsLevelPts, freezeLevelPts, point);
+   if(isBuy) return MathMin(desiredSl, bid - minDist);
+   return MathMax(desiredSl, ask + minDist);
+  }
+
+//+------------------------------------------------------------------+
+//| TP_StopThroughMarket - the market already traded through the      |
+//| desired stop: the price came back through the trailing / break    |
+//| even level, the leg has to be closed at the market.               |
+//| BUY : bid <= desiredSl, SELL: ask >= desiredSl                    |
+//+------------------------------------------------------------------+
+bool TP_StopThroughMarket(const bool isBuy, const double desiredSl, const double bid, const double ask)
+  {
+   if(desiredSl <= 0.0) return false;
+   if(isBuy) return (bid <= desiredSl);
+   return (ask >= desiredSl);
+  }
+
+//+------------------------------------------------------------------+
+//| TP_StopIsBetter - is the candidate stop better than the current?  |
+//| BUY : higher is better, SELL: lower is better, a missing current  |
+//| stop (<= 0) makes every candidate better. Equal is not better.    |
+//+------------------------------------------------------------------+
+bool TP_StopIsBetter(const bool isBuy, const double candidateSl, const double currentSl)
+  {
+   if(candidateSl <= 0.0) return false;
+   if(currentSl <= 0.0) return true;
+   if(isBuy) return (candidateSl > currentSl);
+   return (candidateSl < currentSl);
+  }
+
+//+------------------------------------------------------------------+
+//| TP_StopFrozen - is a stop / take profit level inside the freeze   |
+//| zone of the market? While it is, the server refuses a modify.     |
+//+------------------------------------------------------------------+
+bool TP_StopFrozen(const double marketPrice, const double level,
+                   const long freezeLevelPts, const double point)
+  {
+   if(level <= 0.0) return false;
+   if(freezeLevelPts <= 0) return false;
+   if(point <= 0.0) return false;
+   return (MathAbs(marketPrice - level) <= (double)freezeLevelPts * point);
+  }
+
+//+------------------------------------------------------------------+
 //| TP_NormalizeVolume - snap a volume to the broker step and clamp   |
 //|  vmin/vmax : symbol volume limits, vstep : volume step,           |
 //|  vlimit    : maximum total volume per side (0 = not used)         |

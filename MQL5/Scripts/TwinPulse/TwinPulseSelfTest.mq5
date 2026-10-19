@@ -312,6 +312,80 @@ void Test_Median(void)
   }
 
 //+------------------------------------------------------------------+
+//| Test 10 - stop clamping, stop-through and the freeze zone         |
+//+------------------------------------------------------------------+
+void Test_StopClamp(void)
+  {
+   Print("--- stop clamp, stop through, freeze ---");
+
+   //--- the minimum distance -----------------------------------------
+   TP_CheckEq("the stop distance is max(stops, freeze, 1) x point",
+              TP_StopMinDistance(20, 30, 0.001), 0.030, 1e-8);
+   TP_CheckEq("the stops level wins when it is larger",
+              TP_StopMinDistance(50, 30, 0.001), 0.050, 1e-8);
+   TP_CheckEq("zero levels are lifted to one point",
+              TP_StopMinDistance(0, 0, 0.001), 0.001, 1e-8);
+
+   //--- BUY: minDist = max(20, 30, 1) x 0.001 = 0.030 ---------------
+   TP_CheckEq("a buy stop far below the bid is kept",
+              TP_ClampStop(true, 4200.0, 4245.139, 4245.339, 20, 30, 0.001), 4200.0, 1e-8);
+   TP_CheckEq("a buy stop inside the stops level is pushed down",
+              TP_ClampStop(true, 4245.130, 4245.139, 4245.339, 20, 30, 0.001), 4245.109, 1e-8);
+   TP_CheckEq("a buy stop above the bid is clamped under it",
+              TP_ClampStop(true, 4245.632, 4245.139, 4245.339, 20, 30, 0.001), 4245.109, 1e-8);
+
+   //--- SELL: minDist = 0.030 above the ask -------------------------
+   TP_CheckEq("a sell stop far above the ask is kept",
+              TP_ClampStop(false, 4300.0, 4245.139, 4245.339, 20, 30, 0.001), 4300.0, 1e-8);
+   TP_CheckEq("a sell stop inside the stops level is pushed up",
+              TP_ClampStop(false, 4245.350, 4245.139, 4245.339, 20, 30, 0.001), 4245.369, 1e-8);
+   TP_CheckEq("a sell stop below the ask is clamped above it",
+              TP_ClampStop(false, 4244.900, 4245.139, 4245.339, 20, 30, 0.001), 4245.369, 1e-8);
+
+   //--- stop through: the example of the smoke test log -------------
+   TP_Check("the buy stop of the log is beyond the bid (STOP_THROUGH)",
+            TP_StopThroughMarket(true, 4245.632, 4245.139, 4245.339));
+   TP_Check("a buy stop below the bid is not through",
+            !TP_StopThroughMarket(true, 4244.0, 4245.139, 4245.339));
+   TP_Check("a sell stop above the ask is not through",
+            !TP_StopThroughMarket(false, 4246.0, 4245.139, 4245.339));
+   TP_Check("a sell stop below the ask is through",
+            TP_StopThroughMarket(false, 4245.200, 4245.139, 4245.339));
+   TP_Check("a missing stop is never through the market",
+            !TP_StopThroughMarket(true, 0.0, 4245.139, 4245.339));
+
+   //--- better than the current stop --------------------------------
+   TP_Check("a higher buy stop is better", TP_StopIsBetter(true, 4245.0, 4244.0));
+   TP_Check("a lower buy stop is not better", !TP_StopIsBetter(true, 4243.0, 4244.0));
+   TP_Check("an equal buy stop is skipped", !TP_StopIsBetter(true, 4244.0, 4244.0));
+   TP_Check("a lower sell stop is better", TP_StopIsBetter(false, 4243.0, 4244.0));
+   TP_Check("a higher sell stop is not better", !TP_StopIsBetter(false, 4245.0, 4244.0));
+   TP_Check("any stop beats a missing one", TP_StopIsBetter(true, 1.0, 0.0));
+   TP_Check("a missing candidate is never better", !TP_StopIsBetter(true, 0.0, 0.0));
+
+   //--- the freeze zone ---------------------------------------------
+   TP_Check("price inside the freeze zone blocks the modify",
+            TP_StopFrozen(4245.200, 4245.190, 30, 0.001));
+   TP_Check("price outside the freeze zone allows the modify",
+            !TP_StopFrozen(4245.500, 4245.190, 30, 0.001));
+   TP_Check("the freeze boundary itself blocks the modify",
+            TP_StopFrozen(4245.220, 4245.190, 30, 0.001));
+   TP_Check("a missing level is never frozen",
+            !TP_StopFrozen(4245.200, 0.0, 30, 0.001));
+   TP_Check("a zero freeze level never blocks",
+            !TP_StopFrozen(4245.200, 4245.190, 0, 0.001));
+
+   //--- the smoke test scenario end to end --------------------------
+   //--- "modify #158 buy sl 4228.706 -> 4245.632 [Invalid stops]"
+   //--- while the bid was 4245.139: the market came back through the
+   //--- desired stop, so the action is a market close, not a modify
+   TP_Check("scenario: the invalid modify of the log is a STOP_THROUGH",
+            TP_StopThroughMarket(true, 4245.632, 4245.139, 4245.339));
+   TP_CheckEq("scenario: the clamp alone would drop the stop under the bid",
+              TP_ClampStop(true, 4245.632, 4245.139, 4245.339, 20, 30, 0.001), 4245.109, 1e-8);
+  }
+
+//+------------------------------------------------------------------+
 //| OnStart - run every test                                          |
 //+------------------------------------------------------------------+
 void OnStart()
@@ -332,6 +406,7 @@ void OnStart()
    Test_TimeFilters();
    Test_Comment();
    Test_Median();
+   Test_StopClamp();
 
    Print("=====================================================");
    Print(StringFormat("  self test finished: %d passed, %d failed", g_passed, g_failed));

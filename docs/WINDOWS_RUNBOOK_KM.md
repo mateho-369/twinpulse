@@ -98,17 +98,41 @@ copy "<REPO>\dist\TwinPulse_single.mq5" "<DATA>\MQL5\Experts\"
 
 ---
 
-## 4. បង្កើតឯកសារព័ត៌មា (News Export) — ធ្វើម្តងនៅតាង live
+## 4. បង្កើតឯកសារព័ត៌មា (News Export) — ត្រូវធ្វើ **ម្តង** នៅលើ chart live **មុន** tester រាល់លើក
 
-ត្រូវបើក chart របស់ **XAUUSDm** នៅគណនី live ហើយដំឡើង `TwinPulseNewsExport` លើ chart នោះ។
+> **សំខាន់ (មុនការសាកល្បងណាមួយ)៖** Strategy Tester មិនអាចអាន economic calendar បានទេ ដូច្នេះរាល់ការសាកល្បង
+> ត្រូវការឯកសារ `Common\Files\TwinPulse_news.csv` ដែលបង្កើតដោយ `TwinPulseNewsExport` ជាមុនសិន។
+> បើឯកសារនេះគ្មាន ពេល tester ចាប់ផ្តើម EA នឹងបោះពុម្ពសារនេះនៅក្នុងកំណត់ហេតុ៖
+>
+> ```
+> TwinPulse_news.csv not found in Common\Files - news filter OFF
+> ```
+>
+> ហើយ **news filter នឹងបិទដោយស្វ័យប្រវត្តិ** (ដោយមិនឃាត់ព័ត៌មាអ្វីទាំងអស់ក្នុងអំឡុងពេលសាកល្បង)។
+> លទ្ធផលសាកល្បងនឹងខុសពីការពិត។ ដូច្នេះ៖ **ត្រូវដំណើរការ `TwinPulseNewsExport` ម្តងនៅលើ chart របស់
+> គណនី live ជានិច្ច មុននឹងចាប់ផ្តើម tester ណាមួយ**។
+
+ត្រូវបើក chart របស់ **XAUUSDm** នៅគណនី live ហើយដំឡើង script `TwinPulseNewsExport` លើ chart នោះ។
 
 * ឯកសារនឹងបង្កើត `Common\Files\TwinPulse_news.csv` ដែលមានព័ត៌មា USD ចំនួនធំពីឆ្នាំ ២០១៨ ដល់ថ្ងៃនេះ។
 * ពេលក្នុង **Strategy Tester** កម្មវិធីនៃ calendar មិនមានទិន្នន័យ ដូច្នេះឯកសារនេះជាមូលដ្ឋានតែមួយក្នុងការសាកល្បង។
 * បើកឯកសារដើម្បីពិនិត្យ៖ `File → Open Data Folder → MQL5\Files` (ឬផ្លូវ `Common` ដែលមានក្នុងថតិច `Terminal\Common`)។
+* ពិនិត្យមើល **មុន** រាល់ការសាកល្បងថាឯកសារនេះពិតជាមាន ហើយ EA មិនបានបោះពុម្ពសារ
+  `TwinPulse_news.csv not found in Common\Files - news filter OFF` នោះទេ។
 
 ---
 
 ## 5. ដំឡើង Strategy Tester តាម `.ini`
+
+0. **បង្កើតថតិច `<DATA>\reports` ជាមុនសិន** — ឯកសារ `.ini` ទាំងអស់សរសេររបាយការណ៍ទៅ
+   `Report=reports\...` ហើយ tester នឹងមិនរក្សាទុករបាយការណ៍ (ឬមិនចាប់ផ្តើមត្រឹមត្រូវ) ទេ
+   បើថតិចនេះមិនទាន់មាន។ បង្កើតវាដោយ៖
+
+   ```
+   mkdir "<DATA>\reports"
+   ```
+
+   ហើយត្រូវប្រាកដថា `Common\Files\TwinPulse_news.csv` មានរួចហើយ (ផ្នែកទី ៤ ខាងលើ)។
 
 1. **បើក chart របស់ XAUUSDm M5 មួយដំណើង** (ត្រូវបើក ដើម្បីទាញយកប្រវេតិកម្ម និងប្រាកដថា terminal យកបានទិន្នន័យស្មាន)។
 2. បើក **Command Prompt** ហើយវាយ៖
@@ -130,7 +154,7 @@ copy "<REPO>\dist\TwinPulse_single.mq5" "<DATA>\MQL5\Experts\"
 ```
 
 3. រង់ចាំឲ្យ terminal បង្ហាញលទ្ធផល។ `ShutdownTerminal=1` ធ្វើឲ្យ terminal បិទដោយខ្លួនឯងបន្ទាប់ចប់ការសាកល្បង។
-4. របៀបបិទផ្ទាំងរបស់ terminal ត្រូវមើលក្នុងថតិចដែលបានដំឡើងរបស់ terminal (ក្រោម `reports\`)។
+4. របៀបបិទផ្ទាំងរបស់ terminal ត្រូវមើលក្នុងថតិច `<DATA>\reports\` (ត្រូវបង្កើតថតិចនេះជាមុនសិន ជំហានទី ០)។
 
 > បើកតែបញ្ចូលនៃ `.ini`៖ `ToDate=2026.09.30` គឺជថ្ងៃចុងក្រោយនៃខែមុន។ បើកចាស់់ ដូចនេះ សូមកែការណ៍នេះ និងរង់ចាំការសាកល្បងបានបញ្ចប់ មុននឹងចាប់ផ្តើម។
 
@@ -154,7 +178,8 @@ copy "<REPO>\dist\TwinPulse_single.mq5" "<DATA>\MQL5\Experts\"
 | **10019** (no money) | គណនីគ្មានសាច់គាត់គ្រប់គ្នា | បន្ថែមគណនី ឬបន្ថែម `MaxTotalLots`/`BaseLot` ត្រូវបានការពារ `MinMarginLevelPct` ក៏ត្រូវការពារដែរ |
 | **"not hedging account"** | `ACCOUNT_MARGIN_MODE` មិនមែន `RETAIL_HEDGING` | បើក hedging ក្នុង `Tools → Options → Accounts` (ត្រូវបានគណនីថ្មី) ឬប្ដូរទៅ broker ដែលគ្រប់គ្នា។ **មិនអាច** បង្កើត EA ឲ្យបញ្ជាទិញលើ netting បានទេ |
 | **"Real account and AllowLive=false"** | ការការពារដោយច្បាស់ | នៅគណនី demo វានឹងមិនក្របស់; កុំបើក `AllowLive=true` បើកមិនទាន់ត្រូវ |
-| **ឯកសារព័ត៌មាមិនទាន់មាន** | tester មិនអាន calendar បាន | ដំឡើង `TwinPulseNewsExport` ម្តងនៅ chart live ជាមុនការសាកល្បង; បើកសាកល្បងកុំបើកការការពារព័ត៌មាទេ វានឹងប្រាកដថា |
+| **ឯកសារព័ត៌មាមិនទាន់មាន** (`TwinPulse_news.csv not found in Common\Files - news filter OFF`) | tester មិនអាន calendar បាន ហើយ news filter បិទដោយស្វ័យប្រវត្តិ | ដំឡើង `TwinPulseNewsExport` ម្តងនៅ chart live **មុន** ការសាកល្បងរាល់លើក (ផ្នែកទី ៤) |
+| **tester មិនសរសេររបាយការណ៍** | ថតិច `<DATA>\reports` មិនទាន់មាន | បង្កើតថតិច `mkdir "<DATA>\reports"` ជាមុនសិន មុននឹងរត់ឯកសារ `.ini` ណាមួយ (ផ្នែកទី ៥ ជំហានទី ០) |
 | **tester មិនចាប់ផ្តើម** | terminal មិនទាន់បានទិន្នន័យប្រវេតិកម្ម ឬ `.ini` មិនត្រឹមតែទ្រង់ | ១) បើក chart XAUUSDm M5 មួយដំណើង ២) សុំទិន្នន័យប្រវេតិកម្ម (`View → Symbols → XAUUSDm → Download`) ៣) ពិនិត្យថា `ExpertParameters` មានផ្លូវត្រឹមតែគណនីទិន្នន័យ ៤) កុំបើក `Visual=1` ពេលប្រើ `/config` |
 | **"Market closed"** | សប្តាហ៍ ឬពេលបិទមណ្ឌល | EA រង់ចាំត្រូវ វានឹងសាកល្បងវិញនៅម៉ោងប្រទាន់បើក |
 | **"too many requests"** | ការបញ្ជាទិញញាប់ញៀន | `MaxOrderRetries` និង `TimerSeconds` កុំបន្ថែម; កុំបើក EA ច្រើនដែលនៅគណនីដូចគ្នា |

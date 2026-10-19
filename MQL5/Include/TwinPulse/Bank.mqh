@@ -125,13 +125,13 @@ bool TP_Bank_TryShred(void)
      {
       TP_LogInfo(StringFormat("Shredding the whole leg %s (%.2f lots), the rest would be below the minimum volume.",
                               TP_LegName(leg), vol));
-      ok = TP_Exec_CloseLeg(ticket);
+      ok = (TP_Exec_CloseLeg(ticket) == TP_CLOSE_OK);
      }
    else
      {
       TP_LogInfo(StringFormat("Shredding %.2f lots of %s, loss %.2f, bank %.2f",
                               step, TP_LegName(leg), lossOfStep, bankBefore));
-      ok = TP_Exec_PartialClose(ticket, step);
+      ok = (TP_Exec_PartialClose(ticket, step) == TP_CLOSE_OK);
      }
    if(!ok) return false;
 
