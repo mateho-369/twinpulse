@@ -32,6 +32,14 @@ The format follows `Keep a Changelog`, the project uses semantic versioning.
 
 ### Fixed
 
+* **A preset that needs a new input silently ran as the default:** MT5 drops
+  `.set` keys it does not know, so running `tester\upgrade` with a
+  `TwinPulse.ex5` compiled before `UseBankShred` existed would have produced
+  six identical "variants" - 35 minutes of tester time and a meaningless
+  table. `summarize_batch.py` now prints a WARNING and puts an
+  **IDENTICAL RESULTS** banner in `SUMMARY.md` when every variant has the
+  same legs / net / spread, and names the recompile as the cause.
+
 * **The forward half was never measured:** a tester run with `ForwardMode=2`
   saves the BACKTEST report only - the trade list of the saved `report.htm`
   ends at the forward boundary (V1: 2026.09.21 20:16) while the CSVs go on

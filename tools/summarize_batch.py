@@ -490,6 +490,30 @@ def main():
     # variants were run with -Only) must not produce a verdict either
     missing = [v for v in VARIANTS if not _has_data(data[v])]
 
+    # ---- a stale .ex5 silently ignores unknown .set keys -------------
+    # MT5 drops parameters it does not know, so a preset that needs an
+    # input the compiled EA does not have runs as the plain default. The
+    # tell is two presets with different settings producing byte-identical
+    # accounting. Say it before anything else is read into the numbers.
+    def _sig(d):
+        lg = d["legs"]
+        return (len(lg.rows), round(lg.net(), 2), round(lg.spread_paid(), 2))
+
+    stale_warning = []
+    if len(data) > 1:
+        sigs = {}
+        for v in VARIANTS:
+            if data[v]["legs"].rows:
+                sigs.setdefault(_sig(data[v]), []).append(v)
+        for sig, group in sigs.items():
+            if len(group) > 1 and len(group) == len([v for v in VARIANTS if data[v]["legs"].rows]):
+                stale_warning = group
+        if stale_warning:
+            print("WARNING: every variant produced identical accounting (%s)." % ", ".join(stale_warning))
+            print("         The .set settings were probably IGNORED - MT5 drops unknown")
+            print("         parameters, which happens when TwinPulse.ex5 is older than")
+            print("         the inputs. Recompile TwinPulse.mq5 (F7, 0 errors) and rerun.")
+
     # ---- run-level spread stats (the run's own spread) --------------
     all_rows = []
     for v in VARIANTS:
@@ -660,6 +684,13 @@ def main():
     lines = []
     lines.append("# TwinPulse decision batch - SUMMARY")
     lines.append("")
+    if stale_warning:
+        lines.append("> **IDENTICAL RESULTS - the settings were probably not applied.**")
+        lines.append("> %s produced exactly the same legs / net / spread, so the .set"
+                     % ", ".join(stale_warning))
+        lines.append("> keys were ignored (MT5 drops unknown parameters). Recompile")
+        lines.append("> TwinPulse.mq5 (F7, 0 errors) and rerun the batch.")
+        lines.append("")
     if missing:
         lines.append("> **BATCH INCOMPLETE** - no data for: %s" % ", ".join(missing))
         lines.append("> (the tester produced no report / no legs.csv rows for them).")
