@@ -400,6 +400,32 @@ void Test_StopClamp(void)
             TP_StopThroughMarket(true, 4245.632, 4245.139, 4245.339));
    TP_CheckEq("scenario: the clamp alone would drop the stop under the bid",
               TP_ClampStop(true, 4245.632, 4245.139, 4245.339, 20, 30, 0.001), 4245.109, 1e-8);
+
+   //--- break even arming (min stop distance here: 0.030) -----------
+   //--- normal ATR: the ATR distance wins ---------------------------
+   TP_CheckEq("a normal ATR arms the break even at 0.6 x ATR",
+              TP_BreakEvenArmDistance(0.6, 2.0, 0.20, 20, 30, 0.001), 1.20, 1e-8);
+   //--- small ATR: the placeable floor wins: 0.20 + 0.030 + 0.20 ----
+   TP_CheckEq("a small ATR arms at spread + min stop + spread",
+              TP_BreakEvenArmDistance(0.6, 0.10, 0.20, 20, 30, 0.001), 0.430, 1e-8);
+   TP_CheckEq("a zero ATR still arms at the placeable floor",
+              TP_BreakEvenArmDistance(0.6, 0.0, 0.20, 20, 30, 0.001), 0.430, 1e-8);
+   TP_Check("the arming floor is never below 2 x spread + min stop",
+            TP_BreakEvenArmDistance(0.6, 0.10, 0.20, 20, 30, 0.001) >= 0.20 + 0.030 + 0.20);
+
+   //--- scenario: with the floor the break even stop is placeable    ---
+   //--- and below the bid the moment the trigger arms -----------------
+   double arm  = TP_BreakEvenArmDistance(0.6, 0.10, 0.20, 20, 30, 0.001);
+   double bidS = 4200.0 + arm;
+   double beSl = 4200.0 + 0.20;
+   TP_Check("scenario: the break even stop is below the bid when it arms",
+            !TP_StopThroughMarket(true, beSl, bidS, bidS + 0.20));
+   TP_CheckEq("scenario: the clamp keeps the break even stop (it has room)",
+              TP_ClampStop(true, beSl, bidS, bidS + 0.20, 20, 30, 0.001), beSl, 1e-8);
+   //--- the old naive trigger (0.6 x 0.10 = 0.06) armed while the bid
+   //--- was still below the break even level: immediate STOP_THROUGH
+   TP_Check("scenario: the old trigger armed through the market (why the floor exists)",
+            TP_StopThroughMarket(true, beSl, 4200.0 + 0.06, 4200.0 + 0.26));
   }
 
 //+------------------------------------------------------------------+

@@ -401,12 +401,19 @@ void TP_Legs_ManageRunner(const int legIndex)
 
    double currentSl = g_tp.legs[legIndex].sl;
 
+   long stopsLevel  = SymbolInfoInteger(g_symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   long freezeLevel = SymbolInfoInteger(g_symbol, SYMBOL_TRADE_FREEZE_LEVEL);
+
    //--- the stop we would like to have --------------------------------
    //--- the break even trigger uses the peak, so it stays armed after
-   //--- a pull back until the stop is really placed (beDone)
+   //--- a pull back until the stop is really placed (beDone). It only
+   //--- arms when the break even stop (entry +/- spread) is placeable
+   //--- with room the moment it arms: with a small ATR a plain
+   //--- BE_ATR x ATR trigger fired STOP_THROUGH at a small loss
    double desiredSl  = 0.0;
-   double beDist     = BE_ATR * atr;
    double peakMoved  = isBuy ? (best - entry) : (entry - best);
+   double beDist     = TP_BreakEvenArmDistance(BE_ATR, atr, spread,
+                                               stopsLevel, freezeLevel, g_point);
 
    if(g_tp.legs[legIndex].beDone)
      {
@@ -446,9 +453,7 @@ void TP_Legs_ManageRunner(const int legIndex)
 
    //--- FREEZE_LEVEL: no modify while the price is close to the ------
    //--- current SL or TP ---------------------------------------------
-   long stopsLevel  = SymbolInfoInteger(g_symbol, SYMBOL_TRADE_STOPS_LEVEL);
-   long freezeLevel = SymbolInfoInteger(g_symbol, SYMBOL_TRADE_FREEZE_LEVEL);
-   double market    = isBuy ? tick.bid : tick.ask;
+   double market = isBuy ? tick.bid : tick.ask;
    if(TP_StopFrozen(market, currentSl, freezeLevel, g_point) ||
       TP_StopFrozen(market, g_tp.legs[legIndex].tp, freezeLevel, g_point))
       return;

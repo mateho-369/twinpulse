@@ -276,11 +276,20 @@ bool TP_UseBank(void)
 #include <Trade\SymbolInfo.mqh>
 #include <Trade\AccountInfo.mqh>
 
+//--- CTrade::ClearStructures() is a PROTECTED member of the standard --
+//--- library, expose it so the EA can drop the stale retcode of the --
+//--- previous request before a close request -------------------------
+class CTPTrade : public CTrade
+  {
+public:
+   void ResetResult(void) { ClearStructures(); }
+  };
+
 //--- shared terminal objects (one EA instance per symbol / magic) -----
-CTrade       g_trade;
+CTPTrade      g_trade;
 CPositionInfo g_pos;
-CSymbolInfo  g_sym;
-CAccountInfo g_acc;
+CSymbolInfo   g_sym;
+CAccountInfo  g_acc;
 
 //--- EA wide identifiers ----------------------------------------------
 string g_symbol = "";
@@ -396,6 +405,24 @@ bool TP_StopFrozen(const double marketPrice, const double level,
    if(freezeLevelPts <= 0) return false;
    if(point <= 0.0) return false;
    return (MathAbs(marketPrice - level) <= (double)freezeLevelPts * point);
+  }
+
+//+------------------------------------------------------------------+
+//| TP_BreakEvenArmDistance - profit distance that arms the break     |
+//| even stop. At least beAtr x ATR, and never less than the distance |
+//| that makes the break even stop (entry +/- spread) placeable with  |
+//| room the moment it arms: spread + min stop distance + spread.     |
+//| With a small ATR the price must not arm while it is still below   |
+//| the break even level, that fired STOP_THROUGH at a small loss.    |
+//+------------------------------------------------------------------+
+double TP_BreakEvenArmDistance(const double beAtr, const double atr, const double spread,
+                               const long stopsLevelPts, const long freezeLevelPts,
+                               const double point)
+  {
+   double dist = beAtr * atr;
+   double minArm = spread + TP_StopMinDistance(stopsLevelPts, freezeLevelPts, point) + spread;
+   if(dist < minArm) dist = minArm;
+   return dist;
   }
 
 //+------------------------------------------------------------------+
@@ -1852,24 +1879,29 @@ ENUM_TP_CLOSE_RESULT TP_Exec_CloseLeg(const ulong ticket)
       return TP_CLOSE_GONE;
      }
 
-   //--- drop the stale retcode of the previous request, so a call that |
-   //--- sends nothing can be told from a request that really failed   --
-   g_trade.ClearStructures();
+   //--- drop the stale retcode of the previous request, so a call that
+   //--- sends nothing can be told from a request that really failed
+   g_trade.ResetResult();
    bool ok = g_trade.PositionClose(ticket);
    uint rc = g_trade.ResultRetcode();
-   bool sent = (ok || rc != 0);
-   if(!sent)
+   if(ok)
      {
-      //--- CTrade::PositionClose returns false without sending anything
-      //--- when the position vanished between the check and the send
+      g_stats.closeAttempts++;
+      return TP_CLOSE_OK;
+     }
+
+   //--- second safety net: CTrade::PositionClose returns false without
+   //--- sending anything when the position vanished - re-check the ticket
+   if(!PositionSelectByTicket(ticket))
+     {
       TP_Exec_NoteGone(ticket);
       return TP_CLOSE_GONE;
      }
 
+   //--- the position still exists: a request was sent and failed -----
    g_stats.closeAttempts++;
-   if(ok) return TP_CLOSE_OK;
-
    g_stats.closeFailures++;
+   if(rc == 0) rc = (uint)GetLastError();
    TP_LogWarn(StringFormat("Close of ticket %I64u failed: %u (%s)", ticket, rc,
                            g_trade.ResultRetcodeDescription()));
    return TP_CLOSE_FAIL;
@@ -1919,26 +1951,31 @@ ENUM_TP_CLOSE_RESULT TP_Exec_CloseBy(const ulong ticket1, const ulong ticket2)
       magic1 != magic2 || magic1 != g_magic)
       return TP_CLOSE_NOPAIR;
 
-   g_trade.ClearStructures();
+   g_trade.ResetResult();
    bool ok = g_trade.PositionCloseBy(ticket1, ticket2);
    uint rc = g_trade.ResultRetcode();
-   bool sent = (ok || rc != 0);
-   if(!sent)
-     {
-      TP_Exec_NoteGone(ticket1);
-      TP_Exec_NoteGone(ticket2);
-      return TP_CLOSE_GONE;
-     }
-
-   g_stats.closeAttempts++;
    if(ok)
      {
+      g_stats.closeAttempts++;
       g_stats.closeByCount++;
       TP_LogInfo(StringFormat("Close By executed: %I64u / %I64u", ticket1, ticket2));
       return TP_CLOSE_OK;
      }
 
+   //--- second safety net: nothing was sent when a ticket vanished ---
+   bool still1 = PositionSelectByTicket(ticket1);
+   bool still2 = PositionSelectByTicket(ticket2);
+   if(!still1 || !still2)
+     {
+      if(!still1) TP_Exec_NoteGone(ticket1);
+      if(!still2) TP_Exec_NoteGone(ticket2);
+      return TP_CLOSE_GONE;
+     }
+
+   //--- both positions still exist: a request was sent and failed ----
+   g_stats.closeAttempts++;
    g_stats.closeFailures++;
+   if(rc == 0) rc = (uint)GetLastError();
    TP_LogWarn(StringFormat("Close By %I64u / %I64u failed: %u (%s)", ticket1, ticket2, rc,
                            g_trade.ResultRetcodeDescription()));
    return TP_CLOSE_FAIL;
@@ -1956,24 +1993,27 @@ ENUM_TP_CLOSE_RESULT TP_Exec_PartialClose(const ulong ticket, const double volum
       return TP_CLOSE_GONE;
      }
 
-   g_trade.ClearStructures();
+   g_trade.ResetResult();
    bool ok = g_trade.PositionClosePartial(ticket, volume);
    uint rc = g_trade.ResultRetcode();
-   bool sent = (ok || rc != 0);
-   if(!sent)
+   if(ok)
+     {
+      g_stats.closeAttempts++;
+      TP_LogInfo(StringFormat("Partial close: ticket %I64u volume %.2f", ticket, volume));
+      return TP_CLOSE_OK;
+     }
+
+   //--- second safety net: nothing was sent when the ticket vanished -
+   if(!PositionSelectByTicket(ticket))
      {
       TP_Exec_NoteGone(ticket);
       return TP_CLOSE_GONE;
      }
 
+   //--- the position still exists: a request was sent and failed -----
    g_stats.closeAttempts++;
-   if(ok)
-     {
-      TP_LogInfo(StringFormat("Partial close: ticket %I64u volume %.2f", ticket, volume));
-      return TP_CLOSE_OK;
-     }
-
    g_stats.closeFailures++;
+   if(rc == 0) rc = (uint)GetLastError();
    TP_LogWarn(StringFormat("Partial close of %I64u (%.2f) failed: %u (%s)", ticket, volume, rc,
                            g_trade.ResultRetcodeDescription()));
    return TP_CLOSE_FAIL;
@@ -3225,12 +3265,19 @@ void TP_Legs_ManageRunner(const int legIndex)
 
    double currentSl = g_tp.legs[legIndex].sl;
 
+   long stopsLevel  = SymbolInfoInteger(g_symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   long freezeLevel = SymbolInfoInteger(g_symbol, SYMBOL_TRADE_FREEZE_LEVEL);
+
    //--- the stop we would like to have --------------------------------
    //--- the break even trigger uses the peak, so it stays armed after
-   //--- a pull back until the stop is really placed (beDone)
+   //--- a pull back until the stop is really placed (beDone). It only
+   //--- arms when the break even stop (entry +/- spread) is placeable
+   //--- with room the moment it arms: with a small ATR a plain
+   //--- BE_ATR x ATR trigger fired STOP_THROUGH at a small loss
    double desiredSl  = 0.0;
-   double beDist     = BE_ATR * atr;
    double peakMoved  = isBuy ? (best - entry) : (entry - best);
+   double beDist     = TP_BreakEvenArmDistance(BE_ATR, atr, spread,
+                                               stopsLevel, freezeLevel, g_point);
 
    if(g_tp.legs[legIndex].beDone)
      {
@@ -3270,9 +3317,7 @@ void TP_Legs_ManageRunner(const int legIndex)
 
    //--- FREEZE_LEVEL: no modify while the price is close to the ------
    //--- current SL or TP ---------------------------------------------
-   long stopsLevel  = SymbolInfoInteger(g_symbol, SYMBOL_TRADE_STOPS_LEVEL);
-   long freezeLevel = SymbolInfoInteger(g_symbol, SYMBOL_TRADE_FREEZE_LEVEL);
-   double market    = isBuy ? tick.bid : tick.ask;
+   double market = isBuy ? tick.bid : tick.ask;
    if(TP_StopFrozen(market, currentSl, freezeLevel, g_point) ||
       TP_StopFrozen(market, g_tp.legs[legIndex].tp, freezeLevel, g_point))
       return;

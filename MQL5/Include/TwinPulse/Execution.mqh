@@ -312,24 +312,29 @@ ENUM_TP_CLOSE_RESULT TP_Exec_CloseLeg(const ulong ticket)
       return TP_CLOSE_GONE;
      }
 
-   //--- drop the stale retcode of the previous request, so a call that |
-   //--- sends nothing can be told from a request that really failed   --
-   g_trade.ClearStructures();
+   //--- drop the stale retcode of the previous request, so a call that
+   //--- sends nothing can be told from a request that really failed
+   g_trade.ResetResult();
    bool ok = g_trade.PositionClose(ticket);
    uint rc = g_trade.ResultRetcode();
-   bool sent = (ok || rc != 0);
-   if(!sent)
+   if(ok)
      {
-      //--- CTrade::PositionClose returns false without sending anything
-      //--- when the position vanished between the check and the send
+      g_stats.closeAttempts++;
+      return TP_CLOSE_OK;
+     }
+
+   //--- second safety net: CTrade::PositionClose returns false without
+   //--- sending anything when the position vanished - re-check the ticket
+   if(!PositionSelectByTicket(ticket))
+     {
       TP_Exec_NoteGone(ticket);
       return TP_CLOSE_GONE;
      }
 
+   //--- the position still exists: a request was sent and failed -----
    g_stats.closeAttempts++;
-   if(ok) return TP_CLOSE_OK;
-
    g_stats.closeFailures++;
+   if(rc == 0) rc = (uint)GetLastError();
    TP_LogWarn(StringFormat("Close of ticket %I64u failed: %u (%s)", ticket, rc,
                            g_trade.ResultRetcodeDescription()));
    return TP_CLOSE_FAIL;
@@ -379,26 +384,31 @@ ENUM_TP_CLOSE_RESULT TP_Exec_CloseBy(const ulong ticket1, const ulong ticket2)
       magic1 != magic2 || magic1 != g_magic)
       return TP_CLOSE_NOPAIR;
 
-   g_trade.ClearStructures();
+   g_trade.ResetResult();
    bool ok = g_trade.PositionCloseBy(ticket1, ticket2);
    uint rc = g_trade.ResultRetcode();
-   bool sent = (ok || rc != 0);
-   if(!sent)
-     {
-      TP_Exec_NoteGone(ticket1);
-      TP_Exec_NoteGone(ticket2);
-      return TP_CLOSE_GONE;
-     }
-
-   g_stats.closeAttempts++;
    if(ok)
      {
+      g_stats.closeAttempts++;
       g_stats.closeByCount++;
       TP_LogInfo(StringFormat("Close By executed: %I64u / %I64u", ticket1, ticket2));
       return TP_CLOSE_OK;
      }
 
+   //--- second safety net: nothing was sent when a ticket vanished ---
+   bool still1 = PositionSelectByTicket(ticket1);
+   bool still2 = PositionSelectByTicket(ticket2);
+   if(!still1 || !still2)
+     {
+      if(!still1) TP_Exec_NoteGone(ticket1);
+      if(!still2) TP_Exec_NoteGone(ticket2);
+      return TP_CLOSE_GONE;
+     }
+
+   //--- both positions still exist: a request was sent and failed ----
+   g_stats.closeAttempts++;
    g_stats.closeFailures++;
+   if(rc == 0) rc = (uint)GetLastError();
    TP_LogWarn(StringFormat("Close By %I64u / %I64u failed: %u (%s)", ticket1, ticket2, rc,
                            g_trade.ResultRetcodeDescription()));
    return TP_CLOSE_FAIL;
@@ -416,24 +426,27 @@ ENUM_TP_CLOSE_RESULT TP_Exec_PartialClose(const ulong ticket, const double volum
       return TP_CLOSE_GONE;
      }
 
-   g_trade.ClearStructures();
+   g_trade.ResetResult();
    bool ok = g_trade.PositionClosePartial(ticket, volume);
    uint rc = g_trade.ResultRetcode();
-   bool sent = (ok || rc != 0);
-   if(!sent)
+   if(ok)
+     {
+      g_stats.closeAttempts++;
+      TP_LogInfo(StringFormat("Partial close: ticket %I64u volume %.2f", ticket, volume));
+      return TP_CLOSE_OK;
+     }
+
+   //--- second safety net: nothing was sent when the ticket vanished -
+   if(!PositionSelectByTicket(ticket))
      {
       TP_Exec_NoteGone(ticket);
       return TP_CLOSE_GONE;
      }
 
+   //--- the position still exists: a request was sent and failed -----
    g_stats.closeAttempts++;
-   if(ok)
-     {
-      TP_LogInfo(StringFormat("Partial close: ticket %I64u volume %.2f", ticket, volume));
-      return TP_CLOSE_OK;
-     }
-
    g_stats.closeFailures++;
+   if(rc == 0) rc = (uint)GetLastError();
    TP_LogWarn(StringFormat("Partial close of %I64u (%.2f) failed: %u (%s)", ticket, volume, rc,
                            g_trade.ResultRetcodeDescription()));
    return TP_CLOSE_FAIL;

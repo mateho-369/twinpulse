@@ -13,11 +13,20 @@
 #include <Trade\SymbolInfo.mqh>
 #include <Trade\AccountInfo.mqh>
 
+//--- CTrade::ClearStructures() is a PROTECTED member of the standard --
+//--- library, expose it so the EA can drop the stale retcode of the --
+//--- previous request before a close request -------------------------
+class CTPTrade : public CTrade
+  {
+public:
+   void ResetResult(void) { ClearStructures(); }
+  };
+
 //--- shared terminal objects (one EA instance per symbol / magic) -----
-CTrade       g_trade;
+CTPTrade      g_trade;
 CPositionInfo g_pos;
-CSymbolInfo  g_sym;
-CAccountInfo g_acc;
+CSymbolInfo   g_sym;
+CAccountInfo  g_acc;
 
 //--- EA wide identifiers ----------------------------------------------
 string g_symbol = "";
@@ -133,6 +142,24 @@ bool TP_StopFrozen(const double marketPrice, const double level,
    if(freezeLevelPts <= 0) return false;
    if(point <= 0.0) return false;
    return (MathAbs(marketPrice - level) <= (double)freezeLevelPts * point);
+  }
+
+//+------------------------------------------------------------------+
+//| TP_BreakEvenArmDistance - profit distance that arms the break     |
+//| even stop. At least beAtr x ATR, and never less than the distance |
+//| that makes the break even stop (entry +/- spread) placeable with  |
+//| room the moment it arms: spread + min stop distance + spread.     |
+//| With a small ATR the price must not arm while it is still below   |
+//| the break even level, that fired STOP_THROUGH at a small loss.    |
+//+------------------------------------------------------------------+
+double TP_BreakEvenArmDistance(const double beAtr, const double atr, const double spread,
+                               const long stopsLevelPts, const long freezeLevelPts,
+                               const double point)
+  {
+   double dist = beAtr * atr;
+   double minArm = spread + TP_StopMinDistance(stopsLevelPts, freezeLevelPts, point) + spread;
+   if(dist < minArm) dist = minArm;
+   return dist;
   }
 
 //+------------------------------------------------------------------+

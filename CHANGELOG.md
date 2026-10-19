@@ -40,6 +40,21 @@ The format follows `Keep a Changelog`, the project uses semantic versioning.
   logged**. Before a Close By both tickets are verified (both exist,
   opposite types, same symbol, same magic), otherwise the winner is closed
   normally.
+* `CTrade::ClearStructures()` is a **protected** member of the standard
+  library: `g_trade.ClearStructures()` did not compile. `Utils.mqh` now
+  declares `CTPTrade : public CTrade` with a public `ResetResult()` that
+  wraps `ClearStructures()`, and every close path calls
+  `g_trade.ResetResult()`. As a second safety net, when a close / partial
+  close / Close By returns `false` the tickets are re-checked with
+  `PositionSelectByTicket`: gone -> `TP_CLOSE_GONE`, still there ->
+  `TP_CLOSE_FAIL` with the real retcode.
+* Break-even arming with a small ATR: the trigger was `BE_ATR * ATR`
+  alone, so the price could arm while still below the break even level
+  (`entry +/- spread`) and `TP_StopThroughMarket` closed the leg
+  immediately as `STOP_THROUGH` at a small loss. The trigger is now
+  `TP_BreakEvenArmDistance` = `max(BE_ATR * ATR, spread + min stop
+  distance + spread)`: the break even stop must be placeable with room
+  the moment it arms.
 * `FILE_COMMON` was passed as the **4th** `FileOpen` argument (the codepage!)
   instead of OR-ed into `open_flags` in `TwinPulseNewsExport.mq5`,
   `Logger.mqh` and `News.mqh`: the signature is
