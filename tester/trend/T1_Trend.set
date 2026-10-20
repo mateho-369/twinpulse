@@ -5,7 +5,7 @@
 ;  no hedge, no averaging, no martingale, no lot increase. AllowLive is not
 ;  an input here: this EA only ever runs in the strategy tester.
 ;  Run:  powershell -File tools\run_batch.ps1 -Preset tester\trend
-;        -Expert TwinPulse\TwinPulseTrend -Period H1 -Model 2
+;        -Expert TwinPulse\TwinPulseTrend -Period H1 -Model 1
 ; ==========================================================================
 
 ;--- identity

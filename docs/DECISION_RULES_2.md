@@ -28,6 +28,14 @@ Eight presets in `tester/trend/`, one change at a time around a baseline:
 Risk is 0.5% of equity per trade, one position, no hedge, no averaging, no
 martingale. The stop is placed with the order and is never widened.
 
+## The run (fixed before any result)
+
+* symbol `XAUUSDm`, chart `H1`, tester model `Model=1` (1-minute OHLC)
+* **deposit 10,000 USD**, leverage 1:500
+* period **2026.01.01 .. 2026.10.19**, split
+  BACK `2026.01.01 .. 2026.07.11` and FWD `2026.07.12 .. 2026.10.19`
+* the reversal experiment (`tester/reversal`) runs the same dates and deposit
+
 ## Pass gates (all must hold, on the FORWARD half only)
 
 | # | gate | why |
@@ -46,7 +54,12 @@ pass, no re-run with better dates.
 ## Data model (stated before the results)
 
 This EA decides on **H1 bar close** and exits at ATR multiples, so it is run
-with `Model=2` (1-minute OHLC), not `Model=4` (every tick).
+with `Model=1` (1-minute OHLC), not `Model=4` (every tick).
+
+> Correction, made before the first round-3 run and recorded here so it
+> cannot look like a post-result change: the first draft of this file said
+> `Model=2`. In the MT5 `.ini` `Model=2` is **Open prices only** - it would
+> feed the EA one price per bar. The intended model is `Model=1`.
 
 That is deliberate and it is not a lowered gate. The tick-realism gate in
 `DECISION_RULES.md` existed because the hedge EA resolved every leg on a

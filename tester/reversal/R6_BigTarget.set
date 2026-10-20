@@ -5,7 +5,7 @@
 ;  the ONLY thing that limits the orphan leg: with InpGuard_ATR=0 the EA
 ;  holds a naked position until the price returns, however long that takes.
 ;  Run:  powershell -File tools\run_batch.ps1 -Preset tester\reversal
-;        -Expert TwinPulse\TwinPulseReversal -Period H1 -Model 2
+;        -Expert TwinPulse\TwinPulseReversal -Period H1 -Model 1
 ; ==========================================================================
 
 InpMagic=26101703

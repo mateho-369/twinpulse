@@ -40,8 +40,11 @@ param(
     # optional: chart timeframe of the run (the EA picks its own signal TF)
     [string]$Period = "M5",
 
-    # optional: 4 = every tick based on real ticks, 2 = 1 minute OHLC.
-    # A trend EA on H1 does not need tick data and runs far faster on 2.
+    # optional: MT5 tester model, EXACTLY as the .ini understands it:
+    #   0 = every tick, 1 = 1 minute OHLC, 2 = OPEN PRICES ONLY,
+    #   3 = math calculations, 4 = every tick based on real ticks
+    # (2 is NOT "1 minute OHLC" - using it here would feed the EA one
+    #  price per bar and silently turn every strategy into nonsense)
     [int]$Model = 4,
 
     # paths: <INSTALL> = folder with terminal64.exe, <DATA> = terminal data
