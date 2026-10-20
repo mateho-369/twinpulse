@@ -1,3 +1,12 @@
+### The per-trade study - why 50 USD/day is not a parameter problem
+* 1 175 closed trades, 12 months, baseline: **-0.83 per trade, 95% CI
+  [-1.22, -0.44]**. Win rate 34.8% against a 41.7% break-even.
+* Slice search (hour x weekday x side): every cell is zero or negative, and the
+  three significantly negative cells (h13, Wed, Thu, SELL) outnumber the two
+  noise-positive ones.
+* The 10 USD daily stop is not the cause of the loss: the loss is already in
+  each trade. `Y1_LossOff` is predicted to lose more, not less.
+
 ### Round 3 - the 12-month run, read
 * Owner compiled `TwinPulseONE.mq5` and ran it every tick over 12 months on a
   10 000 USD deposit. The visual test restarted at 2026.06.19 with a fresh

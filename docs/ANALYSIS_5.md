@@ -109,6 +109,73 @@ M1 before 2026.10.02 - so "every tick" here is stricter than M1 OHLC but is not
 real-tick truth. That changes the size of the losses, not their sign: the M1-OHLC
 runs of the same family lost in the same direction.
 
+## The same year on 1 000 USD, and the per-trade answer (2026-10-20)
+
+Second run of `TwinPulseONE.mq5`, `InpPreset=0` (the reference cell of the Y
+2x2: drop 10 USD, target 50), XAUUSDm M5, `2025.10.20 - 2026.10.19`, every
+tick, **deposit 1 000**, full year with no restart.
+
+| | value |
+|---|---|
+| Final balance | **23.18** (from 1 000) |
+| Total net profit | **-976.82** |
+| Equity drawdown maximal | **1 048.36 (97.84%)** |
+| Trading days | 243 (the EA stopped opening around 2026.09.28) |
+| USD/day | **-3.98**, 95% CI [-6.05, -1.90] |
+| Losing days | **86.4%** | 
+| Days at or above +50 | 6.6% |
+| Worst / best day | -10.38 / +51.12 |
+| Trades | 1 175 |
+
+Balance by month: +35 (Oct 25), -8, -4, **-201 (Jan 26)**, -111, -152, -78,
+-80, -5, **-165 (Jul 26)**, -103, -106. Under 500 on 2026.04.10, under 100 on
+2026.09.10.
+
+### The number that settles the daily-stop question
+
+| | value |
+|---|---|
+| Average win | **+7.08** |
+| Average loss | **-5.06** |
+| Break-even win rate | **41.7%** |
+| Actual win rate | **34.8%** |
+| **Expectancy per trade** | **-0.83**, 95% CI **[-1.22, -0.44]** |
+
+**Expectancy is negative at the trade level, before any day is aggregated.** A
+daily stop can only decide *when* a day stops; it cannot turn a losing trade
+into a winning one. That is why the year lost whether the cap was 10, 30 or
+absent - and why the planned Y1_LossOff run cannot rescue it.
+
+Slice search over the 1 175 closed deals (every cut, 95% CI on the mean):
+
+| slice | n | expectancy | 95% CI | verdict |
+|---|---|---|---|---|
+| hour 13 | 663 | -0.92 | [-1.43, -0.42] | **significantly negative** |
+| hour 14 | 311 | -0.71 | [-1.47, +0.05] | negative, not separable |
+| hour 15 | 137 | -0.26 | [-1.59, +1.07] | noise |
+| Monday | 247 | -1.20 | [-1.97, -0.43] | **significantly negative** |
+| Tuesday | 268 | +0.19 | [-0.70, +1.07] | noise |
+| Wednesday | 239 | -1.61 | [-2.37, -0.84] | **significantly negative** |
+| Thursday | 193 | -2.30 | [-3.16, -1.43] | **significantly negative** |
+| Friday | 227 | +0.42 | [-0.55, +1.39] | noise |
+| SELL | 659 | -1.11 | [-1.59, -0.62] | **significantly negative** |
+| BUY | 516 | -0.48 | [-1.10, +0.15] | negative, not separable |
+
+The two positive cells (Tuesday, Friday) have intervals that straddle zero and
+are exactly what 10 slices of a negative pool look like by chance. There is no
+hour, weekday or side with a positive expectancy that survives its own error
+bar. Filtering to them would be fitting five years of noise with one year of
+data.
+
+### What this means for the Y presets
+
+They were designed to test whether the 10 USD daily stop was hiding an edge.
+The per-trade table says it was not: -0.83 per trade is negative before the
+stop is ever consulted. Removing the cap leaves the same negative expectancy
+over **more** trades, so `Y1_LossOff` is expected to lose *more* in total, not
+less. The prediction is written here before the run, at deposit 10 000 so the
+account survives long enough to measure it.
+
 ## Decision
 
 The M5 scalper family has now been measured on 54 complete days, on an account

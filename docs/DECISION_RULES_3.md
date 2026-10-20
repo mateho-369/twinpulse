@@ -134,6 +134,16 @@ This is a **measurement**, not a tuning round and not a demo:
 Empty at the start of round 1. Every later change gets its own dated entry,
 written before the round it affects.
 
+### 2026-10-20 - per-trade expectancy, the decisive number
+1 175 closed trades over the same year: average win +7.08, average loss -5.06,
+break-even win rate 41.7%, actual 34.8%. **Expectancy -0.83 per trade, 95% CI
+[-1.22, -0.44].** Every hour cut, every weekday cut and both sides are zero or
+negative; the only two positive cells (Tue +0.19, Fri +0.42) have intervals that
+straddle zero. The daily stop is therefore not the cause of the loss - it
+cannot be, because the loss is already inside each trade. Prediction, written
+before the Y run: `Y1_LossOff` loses MORE in total (same negative expectancy,
+more trades).
+
 ### 2026-10-20 - the 12-month answer (owner run, every tick)
 `TwinPulseONE.mq5`, baseline preset (`custom`), XAUUSDm M5, 2025.10.20-2026.10.19,
 every tick, deposit 10 000 (the visual test restarted mid-year, so the year is
