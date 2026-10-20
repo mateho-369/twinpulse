@@ -196,6 +196,14 @@ def main():
               " NOT safe to upload:" % len(leaks))
         for r in leaks[:10]:
             print("   " + r)
+        # leave nothing behind: a failed pack used to keep a full copy of the
+        # reports (identity included) in the temp folder
+        shutil.rmtree(stage, ignore_errors=True)
+        if os.path.exists(zip_path):
+            os.remove(zip_path)
+        txt = zip_path + ".txt"
+        if os.path.exists(txt):
+            os.remove(txt)
         return 3
 
     print("packed %d file(s) -> %s  (%.1f MB)" % (len(rels), zip_path, size / 1048576.0))
