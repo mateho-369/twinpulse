@@ -25,6 +25,14 @@ import gen_scalp2_presets as r2       # noqa: E402
 # the two round-2 presets that duplicate a round-1 name or role
 SKIP_R2 = {"S7_AllDay"}               # identical to round 1's anchor
 
+# A 12-month window costs about five times a 10-week one, so round 3 runs the
+# variants that answer a distinct question instead of all 34: three entries,
+# the random entry control, the session control, the 2+2 book, the adaptive
+# book, five exit pairs with their twins, the trail anchor and the
+# no-daily-stop probe.
+KEEP_R1 = {"S1_Pullback", "S2_WideTP", "S3_MeanRev", "S4_Breakout",
+           "S5_Random", "S7_AllDay", "S8_Hedge4", "S10_Adaptive"}
+
 HEADER = """; ==========================================================================
 ;  TwinPulse Scalp - round 3 (measurement at 1000 USD), {name}
 ;  {desc}
@@ -56,13 +64,11 @@ def main():
     n = 0
     # round 1: every variant, with and without the daily target
     for name, desc, over in r1.VARIANTS:
+        if name not in KEEP_R1:
+            continue
         vals = dict(r1.BASE)
         vals.update(over)
         emit(out, name, desc, vals, "r1")
-        n += 1
-        off = dict(vals)
-        off["InpDailyTargetUSD"] = "0.00"
-        emit(out, name + "_N", desc + " (no daily target)", off, "r1")
         n += 1
     # round 2: the exit pairs and their twins, minus the duplicate anchor.
     # The seeds reproduce round 2 exactly (71 + 2k - 1), so a twin's result can

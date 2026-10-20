@@ -94,10 +94,12 @@ account died first: at 100 USD a 6 USD stop is 6% and a 10 USD daily stop is
 10%, so 9 of 22 variants in round 1 and 8 of 13 in round 2 stopped trading
 inside 7-9 days. A 7-day sample cannot separate an edge from a coin.
 
-Round 3 therefore changes **the account size and nothing else**: the same 34
-presets, the same inputs, the same lot of **0.01**, the same stops in price
-units. At 1000 USD the daily stop is 1% and the daily target 5%, which is a
-sane risk profile, and the full 52-day window can run to the end.
+Round 3 therefore changes **the account size and the window, and nothing else**:
+20 presets that each answer a distinct question, the same inputs, the same lot
+of **0.01**, the same stops in price units, over **2025.10.20 .. 2026.10.19** -
+twelve months, split 2/3 back / 1/3 forward. At 1000 USD the daily stop is 1%
+and the daily target 5%, which is a sane risk profile, and the whole year can
+run to the end instead of dying in week two.
 
 This is a **measurement**, not a tuning round and not a demo:
 

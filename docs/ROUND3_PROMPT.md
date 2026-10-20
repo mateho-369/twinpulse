@@ -1,4 +1,4 @@
-# Round 3 - the one Claude Code prompt (measurement at 1000 USD)
+# Round 3 - the one Claude Code prompt (12 months, 1000 USD)
 
 Copy everything between the two rules into Claude Code on the Windows machine.
 
@@ -25,9 +25,9 @@ git log --oneline -1
 ```
 Expect the newest commit on this branch. Then prove the round-3 presets:
 ```
-(Get-ChildItem tester\scalp3\*.set).Count                                   # must be 34
-(Select-String -Path tester\scalp3\*.set -Pattern '^InpMode=' | Measure-Object).Count   # must be 34
-(Select-String -Path tester\scalp3\*.set -Pattern '^InpLots=0.01' | Measure-Object).Count # must be 34
+(Get-ChildItem tester\scalp3\*.set).Count                                   # must be 20
+(Select-String -Path tester\scalp3\*.set -Pattern '^InpMode=' | Measure-Object).Count   # must be 20
+(Select-String -Path tester\scalp3\*.set -Pattern '^InpLots=0.01' | Measure-Object).Count # must be 20
 ```
 If any count is wrong, stop. The lot **must still be 0.01**: this round changes
 the account size only, never the position size.
@@ -43,18 +43,22 @@ Print the `.ex5` timestamp.
 
 **3. MT5 must be closed.** Ask me, wait for "closed".
 
-**4. Run the batch - 34 presets, back + forward = 68 tester runs, deposit 1000.**
+**4. Run the batch - 20 presets, back + forward = 40 tester runs, 12 months, deposit 1000.**
 ```
-powershell -ExecutionPolicy Bypass -File tools\run_batch.ps1 -Symbol XAUUSDm -FromDate 2026.08.01 -ToDate 2026.10.19 -Deposit 1000 -Preset tester\scalp3 -Expert TwinPulse\TwinPulseScalp -Period M5 -Model 1
+powershell -ExecutionPolicy Bypass -File tools\run_batch.ps1 -Symbol XAUUSDm -FromDate 2025.10.20 -ToDate 2026.10.19 -Deposit 1000 -Preset tester\scalp3 -Expert TwinPulse\TwinPulseScalp -Period M5 -Model 1
 ```
 It is resume-safe: finished variants are skipped, so rerunning the same command
-is how you recover. This is the long one (68 runs) - report progress as it goes.
+is how you recover. This is the long one (40 runs over 12 months, roughly 20-30 minutes) - report progress as it goes.
 
 **5. Summarize** - use the exact line the batch prints (it carries
 `--deposit 1000`). Then check and report:
-* `SUMMARY.md` lists **34** variants,
-* every variant shows **19 days** on the forward and **~35** on the back - a
-  small number here means the account died again,
+* `SUMMARY.md` lists **20** variants,
+* the first back report shows at least **300 000 bars** - a 12-month M1
+  backtest needs that much history; far fewer means the M1 history is missing
+  and the whole run is invalid. Check it before letting the batch continue,
+* every variant shows roughly **122 forward days** and **243 back days** (the
+  split is 2/3 back, 1/3 forward), and a `final` far from 1000 means the
+  account died,
 * the line `best average USD/day = ... vs target 50` is present,
 * the minimum-deposit table reads `risk on a 1000 USD account`.
 
