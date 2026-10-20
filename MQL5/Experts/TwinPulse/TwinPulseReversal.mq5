@@ -121,7 +121,7 @@ void TP_CsvHeader(void)
    if(!InpWriteCsv || g_csv == INVALID_HANDLE) return;
    FileWrite(g_csv, "time", "cycle", "leg", "side", "volume", "open_price",
              "close_price", "reason", "profit", "pos_net", "bank", "regime",
-             "spread", "atr5", "spread_open", "spread_cost", "gross");
+             "spread", "atr5", "spread_open", "spread_cost", "gross", "stop_dist");
   }
 
 void TP_CsvRow(string leg, string side, double vol, double openPx, double closePx,
@@ -145,7 +145,8 @@ void TP_CsvRow(string leg, string side, double vol, double openPx, double closeP
              DoubleToString(g_atr, 3),
              DoubleToString(TP_Spread(), 3),
              "0",
-             DoubleToString(profit, 2));
+             DoubleToString(profit, 2),
+             DoubleToString(g_guard, 3));
    FileFlush(g_csv);
   }
 
@@ -297,7 +298,20 @@ bool TP_ClosePart(ulong ticket, double volume, string leg, string side,
    double swap = PositionGetDouble(POSITION_SWAP);
    double comm = 0.0;
 
+   double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double step   = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   if(step <= 0.0) step = 0.01;
+
    double send = volume;
+   //a ladder step of a 0.01 lot is 0.0033 - below the broker minimum, so
+   //PositionClosePartial would fail and the step would silently never run.
+   //Close the WHOLE leg instead and say so, never fail quietly.
+   if(send < minLot - 0.0000001)
+     {
+      TP_Log(StringFormat("ladder step %.4f < broker min %.2f - closing the whole leg %s",
+                          send, minLot, leg));
+      send = have;
+     }
    if(send >= have - 0.0000001) send = have;
 
    bool ok = false;
@@ -498,8 +512,40 @@ int OnInit(void)
    return INIT_SUCCEEDED;
   }
 
+void TP_CloseAllAtEnd(void)
+  {
+   int closed = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      ulong t = PositionGetTicket(i);
+      if(t == 0) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
+
+      double vol  = PositionGetDouble(POSITION_VOLUME);
+      double px   = PositionGetDouble(POSITION_PRICE_CURRENT);
+      double prof = PositionGetDouble(POSITION_PROFIT);
+      double swp  = PositionGetDouble(POSITION_SWAP);
+      double ent  = PositionGetDouble(POSITION_PRICE_OPEN);
+      bool   isBuy = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY);
+
+      if(!trade.PositionClose(t)) continue;
+      closed++;
+
+      string leg = "SELL";
+      string side = "short";
+      if(isBuy) { leg = "BUY"; side = "long"; }
+      TP_CsvRow(leg, side, vol, ent, px, "end_of_test", prof, swp, 0.0);
+     }
+
+   if(closed > 0)
+      TP_Log(StringFormat("END OF TEST: closed %d position(s) that were still open", closed));
+   g_phase = 0;
+  }
+
 void OnDeinit(const int reason)
   {
+   if(MQLInfoInteger(MQL_TESTER)) TP_CloseAllAtEnd();
    if(g_csv != INVALID_HANDLE) { FileClose(g_csv); g_csv = INVALID_HANDLE; }
    if(g_log != INVALID_HANDLE) { FileClose(g_log); g_log = INVALID_HANDLE; }
    if(hATR != INVALID_HANDLE) IndicatorRelease(hATR);

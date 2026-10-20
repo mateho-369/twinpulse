@@ -86,6 +86,7 @@ double   g_posLots     = 0.0;
 double   g_posSL       = 0.0;
 double   g_posTP       = 0.0;
 double   g_posATR      = 0.0;
+double   g_posStopDist = 0.0;   // stop distance used at entry, price units
 double   g_posSpread   = 0.0;
 datetime g_posOpenTime = 0;
 datetime g_posOpenBar  = 0;
@@ -178,7 +179,7 @@ void TP_CsvHeader(void)
    FileWrite(g_csv,
              "time", "cycle", "leg", "side", "volume", "open_price", "close_price",
              "reason", "profit", "pos_net", "bank", "regime", "spread", "atr5",
-             "spread_open", "spread_cost", "gross");
+             "spread_open", "spread_cost", "gross", "stop_dist");
   }
 
 void TP_CsvRow(datetime closeTime, double closePrice, string reason,
@@ -208,7 +209,8 @@ void TP_CsvRow(datetime closeTime, double closePrice, string reason,
              DoubleToString(g_posATR, 3),
              DoubleToString(g_posSpread, 3),
              DoubleToString(spreadCost, 2),
-             DoubleToString(profit, 2));
+             DoubleToString(profit, 2),
+             DoubleToString(g_posStopDist, 3));
    FileFlush(g_csv);
   }
 
@@ -330,6 +332,7 @@ void TP_SyncPosition(void)
       g_posSide     = 1;
       if(type == POSITION_TYPE_SELL) g_posSide = -1;
       g_posATR      = 0.0;
+      g_posStopDist = 0.0;
       g_posSpread   = 0.0;
       g_beDone      = false;
       g_trailOn     = false;
@@ -541,6 +544,7 @@ bool TP_Open(int dir, double atr, double spread)
    g_posSL       = sl;
    g_posTP       = tp;
    g_posATR      = atr;
+   g_posStopDist = stopDist;
    g_posSpread   = spread;
    g_posOpenTime = TimeCurrent();
    g_posOpenBar  = (datetime)SeriesInfoInteger(_Symbol, PERIOD_H1, SERIES_LASTBAR_DATE);
@@ -724,8 +728,50 @@ int OnInit(void)
    return INIT_SUCCEEDED;
   }
 
+//+------------------------------------------------------------------+
+//| End of a tester run: never leave a position open, because a leg  |
+//| still open at the last bar has no closing deal, so its floating   |
+//| P/L appears in the legs.csv neither - the report would then say   |
+//| "net -40" while the account still carries an unknown exposure.    |
+//+------------------------------------------------------------------+
+void TP_CloseAllAtEnd(void)
+  {
+   int closed = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      ulong t = PositionGetTicket(i);
+      if(t == 0) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
+
+      //read the money BEFORE the close: after it the position is gone and
+      //OnTradeTransaction may not run again during deinitialisation
+      double vol  = PositionGetDouble(POSITION_VOLUME);
+      double px   = PositionGetDouble(POSITION_PRICE_CURRENT);
+      double prof = PositionGetDouble(POSITION_PROFIT);
+      double swp  = PositionGetDouble(POSITION_SWAP);
+      double ent  = PositionGetDouble(POSITION_PRICE_OPEN);
+      bool   isBuy = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY);
+
+      if(!trade.PositionClose(t)) continue;
+      closed++;
+
+      g_posLots  = vol;
+      g_posEntry = ent;
+      g_posSide  = -1;
+      if(isBuy) g_posSide = 1;
+      TP_CsvRow(TimeCurrent(), px, "end_of_test", prof, swp, 0.0, 0.0);
+     }
+
+   if(closed > 0)
+      TP_Log(StringFormat("END OF TEST: closed %d position(s) that were still open", closed));
+   g_hasPos = false;
+   g_posId  = 0;
+  }
+
 void OnDeinit(const int reason)
   {
+   if(MQLInfoInteger(MQL_TESTER)) TP_CloseAllAtEnd();
    if(g_csv != INVALID_HANDLE) { FileClose(g_csv); g_csv = INVALID_HANDLE; }
    if(g_log != INVALID_HANDLE) { FileClose(g_log); g_log = INVALID_HANDLE; }
    if(hFast != INVALID_HANDLE) IndicatorRelease(hFast);

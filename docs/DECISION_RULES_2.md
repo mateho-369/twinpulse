@@ -68,11 +68,14 @@ closes and the exits are bar-based, so the model that matters is M1 bars, and
 M1 OHLC is the *conservative* choice (it fills stops at the worst price inside
 each minute).
 
-What replaces the tick gate:
+What replaces the tick gate (see CHANGE LOG below - the "M1 coverage >= 95%"
+gate was REMOVED on 2026-10-20 before any round-3 report existed, because the
+number cannot be measured from the artifacts a tester run leaves behind):
 
-* **M1 bar coverage >= 95%** of the expected minutes over the tested period.
-  The report's bar count is checked against the calendar. Below 95% the run is
-  **NOT VALID FOR GATES**.
+* every SUMMARY prints a **coverage probe**: how many distinct days produced a
+  closed leg, against the weekdays in the window. It is printed, not gated -
+  a trend EA legitimately goes two weeks without a trade, so a gap count would
+  fail a healthy run.
 * A variant that passes may be described as **"passed the bar-based test"**.
   It may **not** be called profitable, live-ready or demo-ready until a
   `Model=4` real-tick re-run of the forward half reproduces a positive net.
@@ -95,3 +98,79 @@ What replaces the tick gate:
 Results are reported as a table with, for every variant: forward net, forward
 PF, forward trades, forward equity DD, the gap to `T7_RandomCtl`, and the
 `pos_net` check. Nothing is reported that is not in a pasted report or CSV.
+
+## Reversal experiment gates (frozen before its first report)
+
+`tester/reversal/R1..R7` is a **falsification** experiment, not a candidate
+strategy. Its gates are the minimum that would make it worth a second look,
+all on the **FORWARD** half:
+
+| # | gate |
+|---|---|
+| 1 | net profit > 0 |
+| 2 | PF >= 1.10 (worse of the recorded and reference-spread series) |
+| 3 | at least **30 closed cycles** |
+| 4 | equity drawdown <= 20% |
+| 5 | **no position left open at the end of the run** |
+| 6 | no single cycle may carry more than **25%** of the net |
+| 7 | `sum(pos_net)` equals the report net within 1.00 in **both** halves |
+
+`R3_NoGuard` (orphan held forever) is the ruin control. It is expected to end
+with an open position or a margin stop-out; that outcome is a result, not a
+crash, and it is reported as such.
+
+## CHANGE LOG - every rule change, with the time it was made
+
+All entries below were written **before the first round-3 / reversal report
+existed on this machine**. If a later report contradicts one of them, the
+report wins and this file is not edited to match.
+
+### 2026-10-20 ~17:10 (Asia/Bangkok) - `Model=2` corrected to `Model=1`
+The first draft said `Model=2`. In the MT5 `.ini` `Model=2` is **Open prices
+only**, which feeds the EA one price per bar and would have made every ATR
+stop untestable. Corrected to `Model=1` (1 minute OHLC) and the mapping
+(0/1/2/3/4) written into `tools/run_batch.ps1`. No result existed.
+
+### 2026-10-20 ~18:05 (Asia/Bangkok) - the "M1 coverage >= 95%" gate is REMOVED
+**Reason:** it cannot be measured. The tester report's `Bars:` field is the
+*chart* timeframe (H1), not M1, so neither the report nor the legs CSV carries
+the M1 bar count. Implementing it as a guess would have produced a gate that
+either always passes or always fails.
+**Replacement:** a printed coverage probe in every SUMMARY (days with a closed
+leg vs weekdays in the window) plus the standing rule that no demo or live
+claim is allowed without the `Model=4` real-tick re-run of the forward half.
+This is a *weaker* guarantee than the original gate and it is recorded as such.
+
+### 2026-10-20 ~18:05 (Asia/Bangkok) - `R4_Ladder` runs at 0.03 lot, with a new control `R7_LadderCtl`
+**Reason:** a third of 0.01 lot is 0.0033, below the broker minimum step of
+0.01, so `PositionClosePartial` fails and the 30/60/90 ladder would silently
+never run - a preset that looks like it tests the ladder while testing
+nothing.
+**Decision:** `R4_Ladder` runs at **0.03** lot (three real 0.01 steps) and a
+matched control `R7_LadderCtl` runs at **0.03** lot with the ladder OFF.
+R4 is judged against **R7**, never against R1 (0.01 lot) - comparing different
+lot sizes would answer the wrong question.
+**Code guard:** `TwinPulseReversal` now closes the whole leg and says so if a
+ladder step ever falls below the broker minimum. Partial closes can no longer
+fail silently.
+
+### 2026-10-20 ~18:05 (Asia/Bangkok) - `summarize_batch.py` is family-aware
+**Reason:** it carried the hedge gates (PF 1.20, RF 2, "STOP the hedge idea")
+and would have printed a false verdict for a trend or reversal report.
+**Decision:** `--rules {hedge|trend|reversal}`, or detection from the reports
+folder name (`decision`/`upgrade` -> hedge, `trend` -> trend,
+`reversal` -> reversal). **An unknown folder is a hard error**, never a guess.
+Each family prints only its own rulebook's gates and its own verdict text.
+
+### 2026-10-20 ~18:05 (Asia/Bangkok) - open positions at the end are reported, not assumed away
+Both new EAs now close everything in `OnDeinit` when running in the tester, and
+write that close into the legs CSV (`reason=end_of_test`). `summarize_batch.py`
+additionally prints `report net - sum(pos_net)` for every variant, so a leg
+left open is visible as a number instead of quietly shrinking the sample.
+
+### 2026-10-20 ~18:05 (Asia/Bangkok) - minimum-deposit line added to every SUMMARY
+Every SUMMARY now prints, per variant, the median stop distance of the run and
+the account size at which a 0.01 lot (the broker minimum, 1 oz of gold = 1 USD
+per 1.00 of price) equals the target risk of `--risk-pct` (default 0.50%):
+`min_deposit = 100 x median_stop / risk_pct`. This answers "does this EA fit a
+small account" with arithmetic instead of opinion.

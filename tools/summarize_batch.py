@@ -41,6 +41,48 @@ from datetime import datetime, timedelta
 VARIANTS = []
 RANDOM = []
 
+# ---------------------------------------------------------------------------
+#  FAMILIES
+#  Every family has its own frozen rule document. The hedge gates (PF 1.20,
+#  RF 2, "STOP the hedge idea") must NEVER be applied to a strategy they were
+#  not written for: a trend EA judged with hedge gates is a false verdict in
+#  both directions.
+# ---------------------------------------------------------------------------
+FAMILY = None
+FAMILIES = {
+    # leaf folder name -> family
+    "decision": "hedge",
+    "upgrade":  "hedge",
+    "trend":    "trend",
+    "reversal": "reversal",
+}
+FAMILY_DOC = {
+    "hedge":    "docs/DECISION_RULES.md",
+    "trend":    "docs/DECISION_RULES_2.md",
+    "reversal": "docs/DECISION_RULES_2.md (reversal section) + docs/REVERSAL_TEST.md",
+}
+
+
+def detect_family(rdir, explicit=None):
+    """the family of a batch: explicit --rules wins, else the reports folder.
+
+    Fails LOUDLY: an unknown folder is never guessed, because guessing wrong
+    means printing a verdict against the wrong rulebook."""
+    if explicit:
+        fam = explicit.strip().lower()
+        if fam not in FAMILY_DOC:
+            raise SystemExit("ERROR: unknown --rules '%s' (known: %s)"
+                             % (explicit, ", ".join(sorted(FAMILY_DOC))))
+        return fam
+    leaf = os.path.basename(os.path.normpath(rdir)).lower()
+    if leaf in FAMILIES:
+        return FAMILIES[leaf]
+    raise SystemExit(
+        "ERROR: cannot tell which rulebook applies to reports folder '%s'.\n"
+        "       Known folders: %s.\n"
+        "       Pass --rules {hedge|trend|reversal} explicitly instead of letting\n"
+        "       a guess pick the gates." % (leaf, ", ".join(sorted(FAMILIES))))
+
 
 def discover(rdir):
     """folders of rdir that carry a tester report or a legs CSV"""
@@ -427,6 +469,352 @@ def find_symbol_info(rdir, data_dir):
     return None, None
 
 
+
+# ===========================================================================
+#  ROUND 3+ FAMILIES (trend / reversal)
+#
+#  Separate on purpose. The hedge rules (docs/DECISION_RULES.md) ask a
+#  different question and would give a false verdict here. These gates come
+#  from docs/DECISION_RULES_2.md and were frozen before the first round-3
+#  report existed.
+# ===========================================================================
+
+def coverage_probe(legs, rows, d_from, d_to):
+    """days that produced a closed leg, against the weekdays in the window.
+
+    Printed in every SUMMARY, never gated: a trend EA can go two weeks
+    without a trade and still be healthy. It exists so a mostly empty run is
+    visible instead of looking like a small sample."""
+    days = set()
+    for r in rows:
+        t = legs._close(r)
+        if t is not None:
+            days.add(t.date())
+    weekdays = 0
+    d = d_from.date()
+    end = d_to.date()
+    while d < end:
+        if d.weekday() < 5:
+            weekdays += 1
+        d = d + timedelta(days=1)
+    pct = (100.0 * len(days) / weekdays) if weekdays else None
+    return len(days), weekdays, pct
+
+
+def _median(vals):
+    vals = sorted(v for v in vals if v is not None)
+    if not vals:
+        return None
+    n = len(vals)
+    if n % 2:
+        return vals[n // 2]
+    return (vals[n // 2 - 1] + vals[n // 2]) / 2.0
+
+
+def _stop_distances(legs, rows, sl_atr):
+    """stop distance in price units per closed leg.
+
+    New EAs write `stop_dist` (the distance actually used at entry). The
+    hedge EA never did, so fall back to sl_atr x `atr5` - and say which."""
+    out = []
+    used_col = False
+    for r in rows:
+        v = (r.get("stop_dist") or "").strip()
+        if v != "":
+            used_col = True
+            try:
+                out.append(float(v))
+            except ValueError:
+                pass
+    if used_col:
+        return out, "stop_dist (as used at entry)"
+    for r in rows:
+        a = (r.get("atr5") or "").strip()
+        if a != "":
+            try:
+                out.append(float(a) * sl_atr)
+            except ValueError:
+                pass
+    return out, "atr5 x %.2f (hedge EA: HardSL_ATR)" % sl_atr
+
+
+def _cycle_key(r):
+    return r.get("cycle", "?")
+
+
+def family_summary(ctx):
+    """SUMMARY for the trend / reversal families. Returns 0 on success."""
+    data = ctx["data"]
+    VARIANTS_ = ctx["variants"]
+    ref = ctx["ref"]
+    csize = ctx["csize"]
+    d_from = ctx["d_from"]
+    d_to = ctx["d_to"]
+    fwd_start = ctx["fwd_start"]
+    d_from_s = ctx["d_from_s"]
+    d_to_s = ctx["d_to_s"]
+    risk_pct = ctx["risk_pct"]
+    sl_atr = ctx["sl_atr"]
+    missing = ctx["missing"]
+    stale_warning = ctx["stale_warning"]
+    posnet = ctx["posnet"]
+    pair = ctx["pair"]
+    rdir = ctx["rdir"]
+
+    rev = (FAMILY == "reversal")
+    randoms = [v for v in VARIANTS_ if "random" in v.lower() or "ctl" in v.lower()]
+
+    # the best control, measured on the forward half and stressed
+    ctl_pf, ctl_pf_ref = None, None
+    for v in randoms:
+        d = data[v]
+        _, f = pair(v, ["profit factor"])
+        if f is not None:
+            ctl_pf = f if ctl_pf is None else max(ctl_pf, f)
+        pr = d["legs"].pf_ref(d["fwd_rows"], ref, csize)
+        if pr is not None:
+            ctl_pf_ref = pr if ctl_pf_ref is None else max(ctl_pf_ref, pr)
+
+    def stats(v):
+        d = data[v]
+        legs = d["legs"]
+        frows = d["fwd_rows"]
+        _, f_net = pair(v, ["total net profit"])
+        _, f_pf = pair(v, ["profit factor"])
+        _, f_dd = pair(v, ["equity drawdown maximal"], pct=True)
+        if f_dd is None:
+            _, f_dd = pair(v, ["equity drawdown relative"], pct=True)
+        vals = [legs.nval(r) for r in frows]
+        wins = [x for x in vals if x > 0]
+        losses = [x for x in vals if x < 0]
+        gross_win = sum(wins)
+        largest = max(wins) if wins else 0.0
+        pfs = [x for x in (f_pf, legs.pf_ref(frows, ref, csize)) if x is not None]
+        sd, sd_src = _stop_distances(legs, frows, sl_atr)
+        cycles = len(set(_cycle_key(r) for r in frows))
+        return {
+            "legs": legs, "frows": frows,
+            "net": legs.net(frows), "net_rep": f_net,
+            "net_ref": legs.net_ref(frows, ref, csize),
+            "pf": f_pf, "pf_ref": legs.pf_ref(frows, ref, csize),
+            "pf_worst": min(pfs) if pfs else None,
+            "dd": f_dd, "trades": len(frows), "cycles": cycles,
+            "gross_win": gross_win, "largest": largest,
+            "stop_med": _median(sd), "stop_src": sd_src,
+            "pf_gap": (min(pfs) - max([x for x in (ctl_pf, ctl_pf_ref) if x is not None])
+                       if pfs and (ctl_pf is not None or ctl_pf_ref is not None) else None),
+        }
+
+    st = {v: stats(v) for v in VARIANTS_}
+
+    def gates(v):
+        s_ = st[v]
+        g = {}
+        g["net_fwd > 0"] = s_["net"] > 0
+        g["pf_fwd >= 1.10"] = (s_["pf_worst"] is not None and s_["pf_worst"] >= 1.10)
+        g["dd_fwd <= 20%"] = (s_["dd"] is not None and s_["dd"] <= 20.0)
+        if rev:
+            g["cycles >= 30"] = s_["cycles"] >= 30
+            g["no position open at end"] = (posnet[v][1][2] is True)
+            g["no single cycle > 25% of net"] = (
+                s_["largest"] <= 0.25 * s_["net"] if s_["net"] > 0 else False)
+        else:
+            g["trades >= 30"] = s_["trades"] >= 30
+            g["largest win <= 40% of gross"] = (
+                s_["largest"] <= 0.40 * s_["gross_win"] if s_["gross_win"] > 0 else False)
+            if v in randoms:
+                g["beats CONTROL by 0.15 PF"] = None
+            else:
+                g["beats CONTROL by 0.15 PF"] = (
+                    s_["pf_gap"] is not None and s_["pf_gap"] >= 0.15)
+        g["pos_net == report (both halves)"] = (
+            posnet[v][0][2] is True and posnet[v][1][2] is True)
+        checks = [x for x in g.values() if x is not None]
+        g["_pass"] = all(checks) if checks else False
+        return g
+
+    allg = {v: gates(v) for v in VARIANTS_}
+
+    def money(x):
+        return "n/a" if x is None else "%.2f" % x
+
+    def pct(x, d=2):
+        return "n/a" if x is None else ("%.*f%%" % (d, x))
+
+    L = []
+    L.append("# TwinPulse %s batch - SUMMARY" % FAMILY)
+    L.append("")
+    L.append("Rulebook: **%s** (frozen before the first report of this family)."
+             % FAMILY_DOC[FAMILY])
+    L.append("")
+    if stale_warning:
+        L.append("> **IDENTICAL RESULTS - the settings were not applied.** %s"
+                 % ", ".join(stale_warning))
+        L.append("> MT5 drops unknown `.set` keys when the `.ex5` is older than the")
+        L.append("> inputs. Recompile (F7, 0 errors) and rerun.")
+        L.append("")
+    if missing:
+        L.append("> **BATCH INCOMPLETE** - no data for: %s. No verdict." % ", ".join(missing))
+        L.append("")
+    L.append("period %s .. %s, forward starts %s (forward = the last 1/3)."
+             % (d_from_s, d_to_s, fwd_start.strftime("%Y.%m.%d")))
+    L.append("")
+    L.append("Every forward number below is measured from `report_fwd` /")
+    L.append("`TwinPulse_legs_fwd.csv`; nothing is copied from the back half.")
+    L.append("")
+    L.append("Coverage probe (printed, not gated - see the rulebook):")
+    L.append("")
+    for v in VARIANTS_:
+        dd, wd, pc = coverage_probe(data[v]["legs"], data[v]["fwd_rows"], d_from, d_to)
+        L.append("* `%s`: %d days with a closed leg of %d weekdays (%.1f%%)"
+                 % (v, dd, wd, pc if pc is not None else 0.0))
+    L.append("")
+
+    L.append("## Per variant")
+    L.append("")
+    L.append("| variant | FWD net | FWD net@ref | FWD PF | FWD PF@ref | FWD eq DD | trades | cycles | verdict |")
+    L.append("|---|---|---|---|---|---|---|---|---|")
+    for v in VARIANTS_:
+        s_ = st[v]
+        g = allg[v]
+        mark = "PASS" if g["_pass"] else "fail"
+        if missing and v in missing:
+            mark = "NO DATA"
+        L.append("| %s | %s | %s | %s | %s | %s | %d | %d | %s |"
+                 % (v, money(s_["net"]), money(s_["net_ref"]),
+                    money(s_["pf"]), money(s_["pf_ref"]), pct(s_["dd"]),
+                    s_["trades"], s_["cycles"], mark))
+    L.append("")
+
+    L.append("## Gate table")
+    L.append("")
+    keys = [k for k in allg[VARIANTS_[0]] if not k.startswith("_")]
+    L.append("| variant | " + " | ".join(keys) + " |")
+    L.append("|---" * (len(keys) + 1) + "|")
+    for v in VARIANTS_:
+        cells = []
+        for k in keys:
+            val = allg[v].get(k)
+            cells.append("n/a" if val is None else ("YES" if val else "no"))
+        L.append("| %s | %s |" % (v, " | ".join(cells)))
+    L.append("")
+    if randoms:
+        L.append("control(s) %s: forward PF %s (report), %s (at reference spread)"
+                 % (", ".join(randoms), money(ctl_pf), money(ctl_pf_ref)))
+        L.append("")
+
+    # ---- minimum deposit ---------------------------------------------------
+    L.append("## Minimum deposit for the intended risk")
+    L.append("")
+    L.append("A 0.01 lot of %s is the broker minimum and risks **1 USD per 1.00 of"
+             % ctx["symbol"])
+    L.append("price distance**. The EA is designed for %.2f%% of equity per trade,"
+             % risk_pct)
+    L.append("so a 0.01 lot only equals that risk when the account is big enough:")
+    L.append("")
+    L.append("| variant | median stop distance | min deposit (0.01 lot = %.2f%%) |"
+             % risk_pct)
+    L.append("|---|---|---|")
+    for v in VARIANTS_:
+        s_ = st[v]
+        sd = s_["stop_med"]
+        md = (100.0 * sd / risk_pct) if sd else None
+        L.append("| %s | %s | %s |"
+                 % (v, money(sd), ("%.0f USD" % md) if md else "n/a"))
+    L.append("")
+    L.append("Source of the stop distance: %s."
+             % (st[VARIANTS_[0]]["stop_src"] if VARIANTS_ else "n/a"))
+    L.append("")
+
+    # ---- open positions ----------------------------------------------------
+    L.append("## Money check (report net vs sum of closed legs)")
+    L.append("")
+    L.append("| variant | sum(pos_net) BACK | report BACK | sum(pos_net) FWD | report FWD | open at end |")
+    L.append("|---|---|---|---|---|---|")
+    for v in VARIANTS_:
+        (sb, rb_, ob), (sf, rf_, of) = posnet[v]
+        gap = None
+        if sf is not None and rf_ is not None:
+            gap = rf_ - sf
+        txt = "n/a" if gap is None else "%.2f" % gap
+        L.append("| %s | %s | %s | %s | %s | %s |" % (v, money(sb), money(rb_),
+                                                      money(sf), money(rf_), txt))
+    L.append("")
+    bad = [v for v in VARIANTS_ if posnet[v][1][2] is False]
+    if bad:
+        L.append("**MISMATCH / OPEN POSITIONS**: %s - the closed legs do not add up"
+                 % ", ".join(bad))
+        L.append("to the report net, which means a position was still open at the end")
+        L.append("(its floating P/L is in neither the report nor the CSV). Treat the")
+        L.append("run as invalid until the EA closes everything on the last bar.")
+        L.append("")
+
+    # ---- exits -------------------------------------------------------------
+    L.append("## Exit reasons (FORWARD half)")
+    L.append("")
+    L.append("| exit | legs | net | net@ref |")
+    L.append("|---|---|---|---|")
+    agg = {}
+    for v in VARIANTS_:
+        legs, rows = st[v]["legs"], st[v]["frows"]
+        for r in rows:
+            k = r.get("reason", "?")
+            a = agg.setdefault(k, [0, 0.0, 0.0])
+            a[0] += 1
+            a[1] += legs.nval(r)
+            a[2] += legs.profit_ref_of(r, ref, csize)
+    for k in sorted(agg):
+        L.append("| %s | %d | %.2f | %.2f |" % (k, agg[k][0], agg[k][1], agg[k][2]))
+    L.append("")
+
+    # ---- verdict -----------------------------------------------------------
+    L.append("## Verdict")
+    L.append("")
+    if missing or not any(data[v]["legs"].rows or data[v]["report_fwd"] for v in VARIANTS_):
+        L.append("**NO VERDICT** - the batch is incomplete or produced no data.")
+    else:
+        passing = [v for v in VARIANTS_ if allg[v]["_pass"]]
+        if passing:
+            L.append("**PASS: %s** against %s." % (", ".join(passing), FAMILY_DOC[FAMILY]))
+            L.append("")
+            L.append("A pass is a pass of the BAR-BASED test only. It does not permit")
+            L.append("a demo account or any live claim until the forward half is")
+            L.append("reproduced with `Model=4` (real ticks) - see the rulebook.")
+        else:
+            L.append("**NO PASS.** No variant clears every gate.")
+            L.append("")
+            L.append("Per the frozen rulebook this family is stopped: no demo, no")
+            L.append("merge to `main`, no further parameter rounds on it.")
+    L.append("")
+
+    with open(os.path.join(rdir, "SUMMARY.md"), "w", encoding="utf-8") as f:
+        f.write("\n".join(L) + "\n")
+    with open(os.path.join(rdir, "SUMMARY_BACK.md"), "w", encoding="utf-8") as f:
+        B = ["# TwinPulse %s - BACK period only (no forward data)" % FAMILY, ""]
+        B.append("Rulebook: %s" % FAMILY_DOC[FAMILY])
+        B.append("")
+        B.append("period %s .. %s, BACK = %s .. %s"
+                 % (d_from_s, d_to_s, d_from_s, fwd_start.strftime("%Y.%m.%d")))
+        B.append("")
+        B.append("| variant | BACK net | BACK net@ref | BACK PF | trades | cycles |")
+        B.append("|---|---|---|---|---|---|")
+        for v in VARIANTS_:
+            d = data[v]
+            legs, rows = d["legs"], d["back_rows"]
+            _, b_pf = pair(v, ["profit factor"])
+            B.append("| %s | %.2f | %s | %s | %d | %d |"
+                     % (v, legs.net(rows), money(legs.net_ref(rows, ref, csize)),
+                        money(b_pf), len(rows),
+                        len(set(_cycle_key(r) for r in rows))))
+        B.append("")
+        with open(os.path.join(rdir, "SUMMARY_BACK.md"), "w", encoding="utf-8") as f2:
+            f2.write("\n".join(B) + "\n")
+
+    print("wrote %s" % os.path.join(rdir, "SUMMARY.md"))
+    print("wrote %s" % os.path.join(rdir, "SUMMARY_BACK.md"))
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="TwinPulse decision batch summary")
     ap.add_argument("--data", help="terminal DATA folder")
@@ -438,6 +826,15 @@ def main():
                     help="contract size for the spread cost (XAUUSD standard = 100)")
     ap.add_argument("--ref-spread", dest="ref_spread", type=float, default=0.20,
                     help="reference spread in price units (default 0.20 = Exness XAUUSDm median)")
+    ap.add_argument("--rules", default=None,
+                    help="which rulebook to apply: hedge | trend | reversal. "
+                         "Default: detected from the reports folder name; "
+                         "an unknown folder is an error, never a guess.")
+    ap.add_argument("--risk-pct", dest="risk_pct", type=float, default=0.5,
+                    help="risk per trade the EA is sized to, %% of equity (default 0.5)")
+    ap.add_argument("--sl-atr", dest="sl_atr", type=float, default=2.5,
+                    help="stop in ATR, used only when the CSV has no stop_dist "
+                         "column (hedge EA: HardSL_ATR, default 2.5)")
     args = ap.parse_args()
 
     if args.reports:
@@ -452,6 +849,10 @@ def main():
     if not os.path.isdir(rdir):
         print("folder not found: %s" % rdir)
         return 2
+
+    global FAMILY
+    FAMILY = detect_family(rdir, args.rules)
+    print("rules: %s  (%s)" % (FAMILY, FAMILY_DOC[FAMILY]))
 
     global VARIANTS, RANDOM
     VARIANTS = discover(rdir)
@@ -668,6 +1069,20 @@ def main():
             row.append((s, rn, abs(s - rn) <= 1.00))
         posnet[v] = row
 
+    # ---- a non-hedge family gets its own rulebook and its own report --
+    # (the hedge gates below would be a false verdict for a trend EA: it
+    # asks "does the signal beat a random control", not "does the bank work")
+    if FAMILY != "hedge":
+        return family_summary({
+            "data": data, "variants": VARIANTS, "ref": ref, "csize": csize,
+            "d_from": d_from, "d_to": d_to, "fwd_start": fwd_start,
+            "d_from_s": args.d_from, "d_to_s": args.d_to,
+            "risk_pct": args.risk_pct, "sl_atr": args.sl_atr,
+            "missing": missing, "stale_warning": stale_warning,
+            "posnet": posnet, "pair": pair, "rdir": rdir,
+            "symbol": args.symbol,
+        })
+
     # ---- the header block (symbol specs + the run's spread) ---------
     head = []
     head.append("## Symbol specs")
@@ -687,6 +1102,13 @@ def main():
     else:
         head.append("- symbol info: " + NA + " (run MQL5\\Scripts\\TwinPulse\\TwinPulseSymbolInfo.mq5"
                     " on the batch symbol and keep Common\\Files\\TwinPulseSymbolInfo.txt)")
+    head.append("")
+    head.append("Coverage probe (printed, not gated):")
+    head.append("")
+    for v in VARIANTS:
+        dd, wd, pc = coverage_probe(data[v]["legs"], data[v]["fwd_rows"], d_from, d_to)
+        head.append("* `%s`: %d days with a closed leg of %d weekdays (%.1f%%)"
+                    % (v, dd, wd, pc if pc is not None else 0.0))
     head.append("")
 
     # ---- SUMMARY.md -------------------------------------------------

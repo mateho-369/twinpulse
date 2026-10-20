@@ -7,6 +7,30 @@ The format follows `Keep a Changelog`, the project uses semantic versioning.
 
 ### Added
 
+* `summarize_batch.py` is **family-aware** (`--rules hedge|trend|reversal`, or
+  detected from the reports folder). An unknown folder is a hard error. The
+  hedge gates can no longer be printed against a trend report - each family
+  gets its own gates, its own verdict text and its own rulebook reference.
+* Every SUMMARY now prints a **coverage probe** (days with a closed leg vs
+  weekdays), the **minimum deposit** at which a 0.01 lot equals the target
+  risk for the run's median stop, and `report net - sum(pos_net)` so a leg
+  left open at the end is a number, not a silent gap.
+* Both new EAs close every position in `OnDeinit` under the tester and write
+  that close into the legs CSV as `reason=end_of_test`.
+* `tester/reversal/R4_Ladder` runs at **0.03 lot** (a third of 0.01 is below
+  the broker minimum) with a matched control `R7_LadderCtl` at 0.03 lot and
+  the ladder off. `TwinPulseReversal` now closes the whole leg and logs it if
+  a ladder step falls under the minimum - partial closes cannot fail silently.
+
+### Changed
+
+* `docs/DECISION_RULES_2.md` gained a **CHANGE LOG** dated 2026-10-20, before
+  any round-3 report existed: the `Model=2` -> `Model=1` correction, the
+  removal of the unmeasurable "M1 coverage >= 95%" gate, the R4 lot decision,
+  the family-aware summarizer, the open-position reporting and the
+  minimum-deposit line. The reversal experiment's seven gates are frozen in
+  the same file.
+
 * `MQL5/Experts/TwinPulse/TwinPulseReversal.mq5` + `tester/reversal/R1..R6` -
   the owner's rule (buy and sell together, close the winner, hold the other to
   break-even, optional 30/60/90 lock) built so MT5 can settle it instead of an
