@@ -97,6 +97,196 @@ bool     g_trailOn     = false;
 int      g_csv = INVALID_HANDLE;
 int      g_log = INVALID_HANDLE;
 
+void TP_Log(string msg)
+  {
+   if(!InpVerboseLog) return;
+   if(g_log == INVALID_HANDLE) return;
+   FileWrite(g_log,
+             TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS),
+             msg);
+   FileFlush(g_log);
+  }
+
+//+------------------------------------------------------------------+
+//| TRADE SESSION                                                    |
+//|                                                                  |
+//| The tester keeps calling OnTick while the symbol's trade session |
+//| is closed: it builds ticks from M1 bars regardless. Every modify  |
+//| is then rejected with MARKET_CLOSED (10018) and the EA retries    |
+//| on the next tick - one round-3 run produced 341 such error lines  |
+//| on 5 tickets.                                                     |
+//|                                                                  |
+//| This block only decides WHETHER TO SEND a stop update. It never   |
+//| changes a decision: a rejected modify had no effect anyway, so    |
+//| skipping it leaves the position exactly where it was and applies  |
+//| the same update on the first tick after the session opens.        |
+//+------------------------------------------------------------------+
+#define TP_MAX_SESSIONS 8
+
+bool     g_sessLoaded      = false;
+bool     g_sessValid       = false;
+datetime g_sessFrom[7][TP_MAX_SESSIONS];
+datetime g_sessTo[7][TP_MAX_SESSIONS];
+int      g_sessCount[7];
+
+ulong    g_modBlockTicket  = 0;    // ticket whose stop updates are paused
+datetime g_modBlockUntil   = 0;    // ...until this server time
+ulong    g_modLoggedTicket = 0;    // the ticket we already explained
+int      g_modSuppressed   = 0;    // attempts we did not send (for the report)
+
+int TP_SecOfDay(datetime t)
+  {
+   MqlDateTime d;
+   TimeToStruct(t, d);
+   return (d.hour * 3600 + d.min * 60 + d.sec);
+  }
+
+datetime TP_DayStart(datetime t)
+  {
+   MqlDateTime d;
+   TimeToStruct(t, d);
+   d.hour = 0;
+   d.min  = 0;
+   d.sec  = 0;
+   return StructToTime(d);
+  }
+
+void TP_LoadSessions(void)
+  {
+   g_sessLoaded = true;
+   g_sessValid  = false;
+   for(int d = 0; d < 7; d++)
+     {
+      g_sessCount[d] = 0;
+      for(uint i = 0; i < TP_MAX_SESSIONS; i++)
+        {
+         datetime from = 0;
+         datetime to   = 0;
+         if(!SymbolInfoSessionTrade(_Symbol, (ENUM_DAY_OF_WEEK)d, i, from, to))
+            break;
+         g_sessFrom[d][g_sessCount[d]] = from;
+         g_sessTo[d][g_sessCount[d]]   = to;
+         g_sessCount[d]++;
+         g_sessValid = true;
+        }
+     }
+  }
+
+//--- is the trade session open at server time t? --------------------
+bool TP_SessionOpenAt(datetime t)
+  {
+   if(!g_sessLoaded) TP_LoadSessions();
+   if(!g_sessValid) return true;          // no schedule -> never block
+
+   int secs = TP_SecOfDay(t);
+   MqlDateTime d;
+   TimeToStruct(t, d);
+   int dow = d.day_of_week;
+
+   for(int i = 0; i < g_sessCount[dow]; i++)
+     {
+      int f = TP_SecOfDay(g_sessFrom[dow][i]);
+      int e = TP_SecOfDay(g_sessTo[dow][i]);
+      if(e == 0) e = 86400;               // "to 00:00" means end of day
+      if(f <= e)
+        {
+         if(secs >= f && secs < e) return true;
+        }
+      else
+        {
+         if(secs >= f) return true;       // session wraps into tomorrow
+        }
+     }
+
+   //yesterday's session may still be running past midnight
+   int ydow = (dow + 6) % 7;
+   for(int i = 0; i < g_sessCount[ydow]; i++)
+     {
+      int f = TP_SecOfDay(g_sessFrom[ydow][i]);
+      int e = TP_SecOfDay(g_sessTo[ydow][i]);
+      if(e == 0) e = 86400;
+      if(f > e && secs < e) return true;
+     }
+   return false;
+  }
+
+//--- first session open strictly after t (0 = unknown) --------------
+datetime TP_NextSessionOpen(datetime t)
+  {
+   if(!g_sessLoaded) TP_LoadSessions();
+   if(!g_sessValid) return 0;
+
+   datetime day = TP_DayStart(t);
+   for(int add = 0; add <= 8; add++)
+     {
+      datetime base = day + (datetime)(add * 86400);
+      MqlDateTime d;
+      TimeToStruct(base, d);
+      int dow = d.day_of_week;
+      datetime best = 0;
+      for(int i = 0; i < g_sessCount[dow]; i++)
+        {
+         int f = TP_SecOfDay(g_sessFrom[dow][i]);
+         datetime cand = base + (datetime)f;
+         if(cand <= t) continue;
+         if(best == 0 || cand < best) best = cand;
+        }
+      if(best != 0) return best;          // days ascend: first hit is nearest
+     }
+   return 0;
+  }
+
+bool TP_SymbolTradeable(void)
+  {
+   long mode = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_MODE);
+   return (mode != SYMBOL_TRADE_MODE_DISABLED);
+  }
+
+//--- may a stop update be sent right now? ---------------------------
+bool TP_CanModifyNow(void)
+  {
+   if(g_modBlockTicket == g_posId && TimeCurrent() < g_modBlockUntil)
+     {
+      g_modSuppressed++;
+      return false;
+     }
+
+   if(!TP_SymbolTradeable() || !TP_SessionOpenAt(TimeCurrent()))
+     {
+      datetime next = TP_NextSessionOpen(TimeCurrent());
+      if(next <= TimeCurrent()) next = TimeCurrent() + 300;
+      g_modBlockTicket = g_posId;
+      g_modBlockUntil  = next;
+      g_modSuppressed++;
+      if(g_modLoggedTicket != g_posId)
+        {
+         g_modLoggedTicket = g_posId;
+         string why = "trade session closed";
+         if(!TP_SymbolTradeable()) why = "symbol trading disabled";
+         TP_Log(StringFormat("%s - stop updates paused for ticket %s until %s (logged once per ticket)",
+                             why, IntegerToString((long)g_posId),
+                             TimeToString(next, TIME_DATE | TIME_MINUTES)));
+        }
+      return false;
+     }
+   return true;
+  }
+
+void TP_BackOffModify(int rc)
+  {
+   datetime next = TP_NextSessionOpen(TimeCurrent());
+   if(next <= TimeCurrent()) next = TimeCurrent() + 300;
+   g_modBlockTicket = g_posId;
+   g_modBlockUntil  = next;
+   if(g_modLoggedTicket != g_posId)
+     {
+      g_modLoggedTicket = g_posId;
+      TP_Log(StringFormat("modify rejected (retcode %d) - paused for ticket %s until %s (logged once per ticket)",
+                          rc, IntegerToString((long)g_posId),
+                          TimeToString(next, TIME_DATE | TIME_MINUTES)));
+     }
+  }
+
 //+------------------------------------------------------------------+
 //| helpers                                                          |
 //+------------------------------------------------------------------+
@@ -162,15 +352,6 @@ int TP_DayStamp(datetime t)
 //+------------------------------------------------------------------+
 //| logging                                                          |
 //+------------------------------------------------------------------+
-void TP_Log(string msg)
-  {
-   if(!InpVerboseLog) return;
-   if(g_log == INVALID_HANDLE) return;
-   FileWrite(g_log,
-             TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS),
-             msg);
-   FileFlush(g_log);
-  }
 
 void TP_CsvHeader(void)
   {
@@ -438,8 +619,17 @@ void TP_ManagePosition(void)
    newSL = TP_NormPrice(newSL);
    if((newSL <= 0.0) || (newSL == g_posSL)) return;
 
+   //--- a modify that the broker will reject must not be sent at all
+   if(!TP_CanModifyNow()) return;
+
    if(!trade.PositionModify(g_posId, newSL, g_posTP))
-      TP_Log(StringFormat("modify failed retcode=%d sl=%.3f", trade.ResultRetcode(), newSL));
+     {
+      int rc = (int)trade.ResultRetcode();
+      if(rc == TRADE_RETCODE_MARKET_CLOSED || rc == TRADE_RETCODE_TRADE_DISABLED)
+         TP_BackOffModify(rc);
+      else
+         TP_Log(StringFormat("modify failed retcode=%d sl=%.3f", rc, newSL));
+     }
    else
       g_posSL = newSL;
   }
@@ -706,6 +896,7 @@ int OnInit(void)
 
    if(InpEntryMode == 1) MathSrand(InpRandomSeed);
 
+   TP_LoadSessions();
    g_dayStartEquity = AccountInfoDouble(ACCOUNT_EQUITY);
    g_peakEquity     = g_dayStartEquity;
    g_dayStamp       = TP_DayStamp(TimeCurrent());
@@ -765,6 +956,9 @@ void TP_CloseAllAtEnd(void)
 
    if(closed > 0)
       TP_Log(StringFormat("END OF TEST: closed %d position(s) that were still open", closed));
+   if(g_modSuppressed > 0)
+      TP_Log(StringFormat("END OF TEST: %d stop update(s) were not sent while the session was closed",
+                          g_modSuppressed));
    g_hasPos = false;
    g_posId  = 0;
   }

@@ -109,6 +109,7 @@ double TP_StopsLevelPrice(void)
   }
 
 //+------------------------------------------------------------------+
+
 void TP_Log(string msg)
   {
    if(!InpVerboseLog || g_log == INVALID_HANDLE) return;
@@ -335,10 +336,158 @@ bool TP_ClosePart(ulong ticket, double volume, string leg, string side,
   }
 
 //+------------------------------------------------------------------+
+//| TRADE SESSION                                                    |
+//|                                                                  |
+//| The tester keeps generating ticks while the symbol's trade       |
+//| session is closed, so every order this EA sends is rejected with  |
+//| MARKET_CLOSED (10018) and the log fills with retries.             |
+//|                                                                  |
+//| This only decides whether to SEND anything. A rejected order had  |
+//| no effect, so skipping it leaves the book exactly where it was    |
+//| and the same rule is evaluated again on the first tick after the  |
+//| session opens. No entry or exit rule is changed.                  |
+//+------------------------------------------------------------------+
+#define TP_MAX_SESSIONS 8
+
+bool     g_sessLoaded       = false;
+bool     g_sessValid        = false;
+datetime g_sessFrom[7][TP_MAX_SESSIONS];
+datetime g_sessTo[7][TP_MAX_SESSIONS];
+int      g_sessCount[7];
+bool     g_sessClosedLogged = false;
+int      g_sessSuppressed   = 0;
+
+int TP_SecOfDay(datetime t)
+  {
+   MqlDateTime d;
+   TimeToStruct(t, d);
+   return (d.hour * 3600 + d.min * 60 + d.sec);
+  }
+
+datetime TP_DayStart(datetime t)
+  {
+   MqlDateTime d;
+   TimeToStruct(t, d);
+   d.hour = 0;
+   d.min  = 0;
+   d.sec  = 0;
+   return StructToTime(d);
+  }
+
+void TP_LoadSessions(void)
+  {
+   g_sessLoaded = true;
+   g_sessValid  = false;
+   for(int d = 0; d < 7; d++)
+     {
+      g_sessCount[d] = 0;
+      for(uint i = 0; i < TP_MAX_SESSIONS; i++)
+        {
+         datetime from = 0;
+         datetime to   = 0;
+         if(!SymbolInfoSessionTrade(_Symbol, (ENUM_DAY_OF_WEEK)d, i, from, to))
+            break;
+         g_sessFrom[d][g_sessCount[d]] = from;
+         g_sessTo[d][g_sessCount[d]]   = to;
+         g_sessCount[d]++;
+         g_sessValid = true;
+        }
+     }
+  }
+
+bool TP_SessionOpenAt(datetime t)
+  {
+   if(!g_sessLoaded) TP_LoadSessions();
+   if(!g_sessValid) return true;          // no schedule -> never block
+
+   int secs = TP_SecOfDay(t);
+   MqlDateTime d;
+   TimeToStruct(t, d);
+   int dow = d.day_of_week;
+
+   for(int i = 0; i < g_sessCount[dow]; i++)
+     {
+      int f = TP_SecOfDay(g_sessFrom[dow][i]);
+      int e = TP_SecOfDay(g_sessTo[dow][i]);
+      if(e == 0) e = 86400;               // "to 00:00" means end of day
+      if(f <= e)
+        {
+         if(secs >= f && secs < e) return true;
+        }
+      else
+        {
+         if(secs >= f) return true;       // session wraps into tomorrow
+        }
+     }
+
+   int ydow = (dow + 6) % 7;
+   for(int i = 0; i < g_sessCount[ydow]; i++)
+     {
+      int f = TP_SecOfDay(g_sessFrom[ydow][i]);
+      int e = TP_SecOfDay(g_sessTo[ydow][i]);
+      if(e == 0) e = 86400;
+      if(f > e && secs < e) return true;
+     }
+   return false;
+  }
+
+datetime TP_NextSessionOpen(datetime t)
+  {
+   if(!g_sessLoaded) TP_LoadSessions();
+   if(!g_sessValid) return 0;
+
+   datetime day = TP_DayStart(t);
+   for(int add = 0; add <= 8; add++)
+     {
+      datetime base = day + (datetime)(add * 86400);
+      MqlDateTime d;
+      TimeToStruct(base, d);
+      int dow = d.day_of_week;
+      datetime best = 0;
+      for(int i = 0; i < g_sessCount[dow]; i++)
+        {
+         int f = TP_SecOfDay(g_sessFrom[dow][i]);
+         datetime cand = base + (datetime)f;
+         if(cand <= t) continue;
+         if(best == 0 || cand < best) best = cand;
+        }
+      if(best != 0) return best;
+     }
+   return 0;
+  }
+
+bool TP_MarketOpen(void)
+  {
+   if(SymbolInfoInteger(_Symbol, SYMBOL_TRADE_MODE) == SYMBOL_TRADE_MODE_DISABLED)
+      return false;
+   return TP_SessionOpenAt(TimeCurrent());
+  }
+
+void TP_SessionLogOnce(void)
+  {
+   if(g_sessClosedLogged) return;
+   g_sessClosedLogged = true;
+   datetime next = TP_NextSessionOpen(TimeCurrent());
+   if(next <= TimeCurrent()) next = TimeCurrent() + 300;
+   TP_Log(StringFormat("trade session closed - EA idle until %s (logged once per closure)",
+                       TimeToString(next, TIME_DATE | TIME_MINUTES)));
+  }
+
+//+------------------------------------------------------------------+
 //| the rule                                                         |
 //+------------------------------------------------------------------+
 void TP_RunRule(void)
   {
+   //--- nothing can execute while the market is shut; the tester keeps
+   //--- ticking, so sending here only produces rejected orders
+   if(!TP_MarketOpen())
+     {
+      g_sessSuppressed++;
+      TP_SessionLogOnce();
+      return;
+     }
+   g_sessClosedLogged = false;
+
    if(g_phase == 0)
      {
       if(PositionsTotal() == 0) { TP_OpenPair(); return; }
@@ -484,6 +633,7 @@ void TP_RunRule(void)
      }
   }
 
+
 //+------------------------------------------------------------------+
 int OnInit(void)
   {
@@ -495,6 +645,7 @@ int OnInit(void)
    trade.SetTypeFillingBySymbol(_Symbol);
    trade.SetAsyncMode(false);
 
+   TP_LoadSessions();
    g_peakEquity = AccountInfoDouble(ACCOUNT_EQUITY);
 
    if(InpWriteCsv)
@@ -540,6 +691,9 @@ void TP_CloseAllAtEnd(void)
 
    if(closed > 0)
       TP_Log(StringFormat("END OF TEST: closed %d position(s) that were still open", closed));
+   if(g_sessSuppressed > 0)
+      TP_Log(StringFormat("END OF TEST: %d rule cycle(s) were skipped while the session was closed",
+                          g_sessSuppressed));
    g_phase = 0;
   }
 

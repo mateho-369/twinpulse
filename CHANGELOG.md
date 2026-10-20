@@ -99,6 +99,19 @@ The format follows `Keep a Changelog`, the project uses semantic versioning.
 
 ### Fixed
 
+* **`MARKET_CLOSED` retry storm.** The tester keeps calling `OnTick` while the
+  symbol's trade session is closed (it builds ticks from M1 bars), so every
+  stop update was rejected with `10018 MARKET_CLOSED` and retried on the next
+  tick - one round-3 run logged **341 failed modifies on 5 tickets**, mostly
+  21:5x server time. Both new EAs now read the broker's session schedule
+  (`SymbolInfoSessionTrade`, cached in `OnInit`) and `SYMBOL_TRADE_MODE`
+  before sending anything, back off to the next session open on
+  `MARKET_CLOSED`/`TRADE_DISABLED`, and log **once per ticket**. No entry or
+  exit decision changes: a rejected order had no effect, so the position is
+  left exactly where it was and the same update is applied on the first tick
+  after the session opens. The suppressed count is printed at the end of the
+  run.
+
 * `summarize_batch.py` now **discovers the variants** from the reports folder
   (a `-Preset` round such as `tester\upgrade` = W1..W6 works without editing
   the list) and recognises a RANDOM control by its name.
