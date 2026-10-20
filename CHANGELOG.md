@@ -1,3 +1,15 @@
+### Round 3 read (1000 USD, 2.6-month window)
+* `docs/ANALYSIS_5.md` - the first complete 54-day sample: nobody died, best
+  expectation **+2.57 USD/day** with a CI of [-4.15, +9.28], random control
+  +0.95 [-5.23, +7.13], cross-half correlation -0.40.
+* **The stopping rule of `docs/DECISION_RULES_3.md` is met**: no variant
+  separates from its own random control, and 50 USD/day is 20x the best
+  measured return. The M5 scalper direction is closed.
+* Fixed in `TPS 1.13`: the CSV `split` column was stamped **after** the leg
+  left the book, so every last-leg trade said `0B0S`. Each leg now remembers
+  the book it was opened into (`nBuyAtOpen`/`nSellAtOpen`) and the close row is
+  written from that snapshot. Money columns were never affected.
+
 ### Added (round 3 - the measurement round)
 * `tester/scalp3/` - the 34 presets of rounds 1 and 2, byte-identical in their
   inputs, measured on a **1000 USD** account. The lot stays 0.01: the account

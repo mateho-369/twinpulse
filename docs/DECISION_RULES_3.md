@@ -123,6 +123,14 @@ This is a **measurement**, not a tuning round and not a demo:
 Empty at the start of round 1. Every later change gets its own dated entry,
 written before the round it affects.
 
+### 2026-10-20 - the stopping rule is met (round 3, 1000 USD)
+34 variants, 54 complete days each, no account died. Best expectation
+**+2.57 USD/day** (S7_AllDay) with a 95% CI of **[-4.15, +9.28]**; the random
+control is **+0.95 [-5.23, +7.13]**; cross-half correlation **-0.40**. No
+strategy separates from its own coin. The 50 USD/day target is 20x the best
+measured return. **The M5 scalper direction is closed** - see
+`docs/ANALYSIS_5.md`. Reopening it needs a new written rule, not a new preset.
+
 ### 2026-10-20 - gate 7 added after round 1
 Round 1: 22 variants, cross-half correlation **-0.40**, random control beat the
 strategies on the back half (+4.24 vs -4.55 USD/day). A forward-only gate on 19
