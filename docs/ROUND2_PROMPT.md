@@ -28,10 +28,10 @@ Expect `35de5c5` or newer. Prove the presets are the round-2 ones:
 ```
 (Get-ChildItem tester\scalp2\*.set).Count                                  # must be 13
 (Select-String -Path tester\scalp2\*.set -Pattern '^InpMode=' | Measure-Object).Count  # must be 13
-(Select-String -Path tester\scalp2\*.set -Pattern '^InpTrailStart_ATR=0.00' | Measure-Object).Count  # must be 10
+(Select-String -Path tester\scalp2\*.set -Pattern '^InpTrailStart_ATR=0.00' | Measure-Object).Count  # must be 11
 ```
 The last check is the point of the round: the trail must be OFF in the five
-exit pairs and their twins. If it is not 10, stop.
+exit pairs and their twins. If it is not 11, stop.
 
 **2. Copy the EA into MT5 and compile it.**
 ```
