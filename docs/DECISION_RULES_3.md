@@ -134,6 +134,15 @@ This is a **measurement**, not a tuning round and not a demo:
 Empty at the start of round 1. Every later change gets its own dated entry,
 written before the round it affects.
 
+### 2026-10-20 - the 12-month answer (owner run, every tick)
+`TwinPulseONE.mq5`, baseline preset (`custom`), XAUUSDm M5, 2025.10.20-2026.10.19,
+every tick, deposit 10 000 (the visual test restarted mid-year, so the year is
+two 10 000 accounts): **259 trading days, -922.27 USD, -3.56 USD/day, 95% CI
+[-5.64, -1.48]**. Break-even needed a 40.6% win rate on a 7.41/5.07 payoff; the
+entry delivered 36.03% over 866 trades. First interval in the project that
+excludes zero, and it excludes it below zero. **The family is closed on
+evidence.** Numbers: `docs/ANALYSIS_5.md`.
+
 ### 2026-10-20 - the stopping rule is met (round 3, 1000 USD)
 34 variants, 54 complete days each, no account died. Best expectation
 **+2.57 USD/day** (S7_AllDay) with a 95% CI of **[-4.15, +9.28]**; the random

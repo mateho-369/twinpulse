@@ -1,3 +1,14 @@
+### Round 3 - the 12-month run, read
+* Owner compiled `TwinPulseONE.mq5` and ran it every tick over 12 months on a
+  10 000 USD deposit. The visual test restarted at 2026.06.19 with a fresh
+  balance, so the year is two accounts: A -497.21 / 171 days, B -425.06 / 88
+  days. As one account: **-922.27 over 259 days = -3.56 USD/day, 95% CI
+  [-5.64, -1.48]**, 85.7% losing days, 6.9% of days at or above 50.
+* 866 trades, 36.03% win rate against a 40.6% break-even, PF 0.82, -0.57 per
+  trade. The interval excludes zero and it does so below zero.
+* `docs/ANALYSIS_5.md` and `docs/DECISION_RULES_3.md` record it; the M5 scalper
+  family is closed on evidence, not on absence of proof.
+
 ### ONE file, every variant
 * `MQL5/Experts/TwinPulse/TwinPulseONE.mq5` - **one compile, 34 variants**,
   selected with the `InpPreset` enum (`custom` = the inputs as typed, so every
