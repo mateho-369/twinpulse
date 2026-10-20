@@ -56,6 +56,7 @@ FAMILIES = {
     "trend":    "trend",
     "reversal": "reversal",
     "scalp":    "scalp",
+    "scalp2":   "scalp",       # round 2 lives in its own folder; same rulebook
 }
 FAMILY_DOC = {
     "hedge":    "docs/DECISION_RULES.md",
