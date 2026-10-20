@@ -22,17 +22,51 @@ import sys
 import tempfile
 import zipfile
 
-# MT5 writes the account block as either `Login: 123` or a two-cell table row.
-# Both shapes are redacted; nothing else in the report is touched.
-REDACT = [
-    (re.compile(r"(?i)(\bLogin\s*:\s*)([^\s<]+)"), r"\1[redacted]"),
-    (re.compile(r"(?i)(\bLogin\s*:\s*</td>\s*<td[^>]*>)([^<]*)"), r"\1[redacted]"),
-    (re.compile(r"(?i)(\bName\s*:\s*)([^\s<][^<\n]*)"), r"\1[redacted]"),
-    (re.compile(r"(?i)(\bName\s*:\s*</td>\s*<td[^>]*>)([^<]*)"), r"\1[redacted]"),
-    (re.compile(r"(?i)(\bServer\s*:\s*)([^\s<][^<\n]*)"), r"\1[redacted]"),
-    (re.compile(r"(?i)(\bServer\s*:\s*</td>\s*<td[^>]*>)([^<]*)"), r"\1[redacted]"),
-    (re.compile(r"(?i)(\bPassword\s*:\s*)(\S+)"), r"\1[redacted]"),
+# An MT5 report puts the identity in four places and only two of them carry a
+# label: `Login:` / `Name:` / `Server:` rows, a `Company:` row, and a bare
+# `<b>Broker-Server (Build 1234)</b>` cell with no label at all. Labelled
+# redaction alone left the server name in all 44 reports of round 1, so the
+# packer now LEARNS the identity strings from the report and then deletes every
+# occurrence of them, wherever they are.
+LABELS = ("login", "name", "server", "company", "password")
+
+LABELLED = [
+    # <td>Company:</td><td><b>Broker Ltd</b></td> - replace the whole bold cell,
+    # otherwise the closing </b> is left behind and the HTML stops making sense
+    (re.compile(r"(?is)(\b(?:%s)\s*:?\s*</t[dh]\s*>\s*<t[dh][^>]*>)\s*<b>[^<]*</b>"
+                % "|".join(LABELS)), r"\1[redacted]"),
+    # <td>Server:</td><td>Exness-MT5Trial6</td>  (attributes and colspan allowed)
+    (re.compile(r"(?is)(\b(?:%s)\s*:?\s*</t[dh]\s*>\s*<t[dh][^>]*>)\s*(?:<b>\s*)?([^<]+)"
+                % "|".join(LABELS)), r"\1[redacted]"),
+    # Server: Exness-MT5Trial6   (same cell)
+    (re.compile(r"(?is)(\b(?:%s)\s*:\s*)([^\s<][^<\r\n]*)" % "|".join(LABELS)),
+     r"\1[redacted]"),
+    # <b>Exness-MT5Trial6 (Build 6238)</b> - the unlabelled header cell
+    (re.compile(r"(?is)<b>\s*([A-Za-z0-9._-]+)\s*\(Build\s*\d+\)\s*</b>"),
+     "<b>[server]</b>"),
 ]
+
+# strings that are never a name but are ours to remove anyway
+ALWAYS = [re.compile(r"(?i)\bExness[-\w.]*(?:\s+[A-Z][\w&.-]*){0,3}"),
+          re.compile(r"(?i)\bMetaQuotes\b")]
+
+
+def identity_strings(text):
+    """the values a report uses to identify the account, learned from the report
+    itself so an unusual layout cannot leak them."""
+    found = set()
+    for m in re.finditer(r"(?is)\b(?:%s)\s*:?\s*</t[dh]\s*>\s*<t[dh][^>]*>\s*(?:<b>\s*)?([^<]+)"
+                         % "|".join(LABELS), text):
+        found.add(m.group(1).strip())
+    for m in re.finditer(r"(?is)\b(?:%s)\s*:\s*([^\s<][^<\r\n]*)" % "|".join(LABELS), text):
+        found.add(m.group(1).strip())
+    for m in re.finditer(r"(?is)<b>\s*([A-Za-z0-9._-]+)\s*\(Build\s*\d+\)", text):
+        found.add(m.group(1).strip())
+    # a login is a bare number; anything shorter than 4 chars is a word like
+    # "USD" and must not be turned into a global replacement
+    return set(x for x in found if len(x) >= 4)
+
+
 EXTS = (".htm", ".html", ".csv", ".log", ".md", ".txt")
 
 
@@ -51,9 +85,14 @@ def read_text(path):
     return raw.decode("latin-1"), "latin-1"
 
 
-def scrub(text):
-    for pat, rep in REDACT:
+def scrub(text, learned=()):
+    for pat, rep in LABELLED:
         text = pat.sub(rep, text)
+    for word in learned:
+        # learned strings are literal, not regex
+        text = re.sub(re.escape(word), "[redacted]", text, flags=re.I)
+    for pat in ALWAYS:
+        text = pat.sub("[redacted]", text)
     return text
 
 
@@ -86,6 +125,22 @@ def main():
         return 2
 
     stage = tempfile.mkdtemp(prefix="round%s_" % args.n)
+
+    # pass 1: read everything once and learn the identity strings from it
+    texts = {}
+    for f in files:
+        try:
+            texts[f] = read_text(f)[0]
+        except Exception as e:                      # a locked or odd file
+            print("WARNING: cannot read %s (%s) - packed unscrubbed?" % (f, e))
+            texts[f] = ""
+    learned = set()
+    for t in texts.values():
+        learned |= identity_strings(t)
+    if learned:
+        print("redacting %d learned identity string(s)" % len(learned))
+
+    # pass 2: scrub and write a UTF-8 copy. The originals stay untouched.
     rels = []
     for f in files:
         rel = os.path.relpath(f, args.reports)
@@ -93,12 +148,8 @@ def main():
         d = os.path.dirname(dst)
         if d and not os.path.isdir(d):
             os.makedirs(d)
-        text, enc = read_text(f)
-        new = scrub(text)
-        # write a UTF-8 copy: redaction must survive, and the originals stay
-        # untouched on disk
         with open(dst, "w", encoding="utf-8", newline="") as fh:
-            fh.write(new)
+            fh.write(scrub(texts[f], learned))
         rels.append(rel)
 
     zip_path = os.path.join(args.desktop, "round%s.zip" % args.n)
@@ -127,6 +178,25 @@ def main():
 
     txt = zip_path + ".txt"
     shutil.copyfile(zip_path, txt)
+
+    # verify: every archived text file must be free of the learned strings
+    leaks = []
+    for r in rels:
+        try:
+            body = open(os.path.join(stage, r), encoding="utf-8").read()
+        except Exception:
+            continue
+        if any(w.lower() in body.lower() for w in learned):
+            leaks.append(r)
+        elif re.search(r"(?i)(exness|metaquotes|technologies)", body):
+            leaks.append(r)
+
+    if leaks:
+        print("ERROR: %d file(s) still contain an identity string, the archive is"
+              " NOT safe to upload:" % len(leaks))
+        for r in leaks[:10]:
+            print("   " + r)
+        return 3
 
     print("packed %d file(s) -> %s  (%.1f MB)" % (len(rels), zip_path, size / 1048576.0))
     print("copied to %s" % txt)

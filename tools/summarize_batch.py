@@ -635,7 +635,6 @@ def family_summary(ctx):
                        if pfs and (ctl_pf is not None or ctl_pf_ref is not None) else None),
         }
 
-    st = {v: stats(v) for v in VARIANTS_}
 
     def gates(v):
         s_ = st[v]
@@ -891,6 +890,24 @@ def scalp_summary(ctx):
     entry_ctl = [v for v in VARIANTS_ if "random" in v.lower()]
     count_ctl = [v for v in VARIANTS_ if "rnd" in v.lower()]
     randoms = entry_ctl + count_ctl
+
+    def control_for(v):
+        """the random that must be beaten, paired like with like.
+
+        A variant that has its OWN random twin (`X1_TP20` -> `X1_TP20_Random`)
+        is judged against that twin - same exits, same target setting, only the
+        entry replaced by a coin. Everything else falls back to S5_Random, the
+        one entry control of the round.
+        """
+        base = v[:-2] if v.endswith("_N") else v
+        tw = base + "_Random" + ("_N" if v.endswith("_N") else "")
+        if tw in st:
+            return tw
+        for c in entry_ctl:
+            if (c.endswith("_N")) == (v.endswith("_N")) and c != v:
+                return c
+        return entry_ctl[0] if entry_ctl else None
+
     no_dd = []          # variants whose report had no readable drawdown
 
     def money_rows(rows):
@@ -966,8 +983,12 @@ def scalp_summary(ctx):
                 # row is a different problem from a parser that cannot read it
                 no_dd.append("%s (%s)" % (v, os.path.basename(
                     d.get("report_fwd_path") or d.get("report_path") or "report")))
-        stops = sorted([legs._f(r, "stop_dist") for r in rows
-                        if (r.get("stop_dist") or "").strip() != ""])
+        # A leg closed by the broker's stop arrives in OnTradeTransaction AFTER
+        # the book forgot it, so its row says stop_dist=0. The `open` rows carry
+        # the real distance - use every row that has a non-zero one, otherwise
+        # the median stop (and the minimum deposit) is n/a for the whole batch.
+        stops = sorted([legs._f(r, "stop_dist") for r in legs_rows
+                        if legs._f(r, "stop_dist") > 0.0])
         stop_med = None
         if stops:
             n = len(stops)
@@ -991,6 +1012,31 @@ def scalp_summary(ctx):
         }
 
     st = {v: stats(v) for v in VARIANTS_}
+    st = {v: stats(v) for v in VARIANTS_}
+
+    def back_light(v):
+        """the same money measures for the BACK half - the gate half is the
+        forward one, but a backtest that only looks good forward is luck, and
+        hiding the back half is how the last four rounds stayed invisible"""
+        d = data[v]
+        legs = d["legs"]
+        rows = money_rows(d.get("back_rows") or [])
+        if not rows:
+            return None
+        vals = [legs.nval(r) for r in rows]
+        wins = [x for x in vals if x > 0]
+        losses = [x for x in vals if x < 0]
+        aw = (sum(wins) / len(wins)) if wins else None
+        al = (sum(losses) / len(losses)) if losses else None
+        be = (100.0 * abs(al) / (aw + abs(al))) if (aw and al) else None
+        dep = st[v]["deposit"]
+        return {"day": day_stats(legs, rows, ctx["d_from"], ctx["fwd_start"]),
+                "net": sum(vals), "n": len(vals),
+                "wr": (100.0 * len(wins) / len(vals)) if vals else None,
+                "be": be,
+                "final": (dep + sum(vals)) if dep is not None else None}
+
+    back_st = {v: back_light(v) for v in VARIANTS_}   # NOT "sb": the money-check loop uses sb for a float
 
     def m(x, d=2):
         return "n/a" if x is None else ("%.*f" % (d, x))
@@ -999,10 +1045,17 @@ def scalp_summary(ctx):
         return "n/a" if x is None else ("%.1f%%" % x)
 
     L = []
-    L.append("# TwinPulse scalp - SUMMARY (round 4)")
+    L.append("# TwinPulse scalp - SUMMARY")
     L.append("")
     L.append("Rulebook: **%s**. Target: %.0f USD/day on a 100 USD account."
              % (FAMILY_DOC["scalp"], SCALP_TARGET_USD_PER_DAY))
+    L.append("")
+    L.append("Back half %s .. %s, forward half %s .. %s. The one table below is"
+             % (ctx["d_from"].strftime("%Y.%m.%d"), ctx["fwd_start"].strftime("%Y.%m.%d"),
+                ctx["fwd_start"].strftime("%Y.%m.%d"), ctx["d_to"].strftime("%Y.%m.%d")))
+    L.append("the **forward** half only - the gates are forward - and the back half")
+    L.append("is printed on its own further down so a difference between the two is")
+    L.append("visible instead of hidden.")
     L.append("")
     if stale_warning:
         L.append("> **IDENTICAL RESULTS** - %s. MT5 ignored the .set keys; recompile"
@@ -1015,19 +1068,39 @@ def scalp_summary(ctx):
     L.append("## The one table")
     L.append("")
     L.append("| variant | net/day avg | median | best | worst | %days>=50 | %losing | "
-             "trades/day | win% | req% | DD | final |")
-    L.append("|---|---|---|---|---|---|---|---|---|---|---|---|")
+             "days | trades/day | win% | req% | DD | final |")
+    L.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for v in VARIANTS_:
         s_ = st[v]
         ds = s_["day"] or {}
         spd = None
         if s_["spread"] is not None and ds.get("days"):
             spd = s_["spread"] / ds["days"]
-        L.append("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |"
+        L.append("| %s | %s | %s | %s | %s | %s | %s | %d | %s | %s | %s | %s | %s |"
                  % (v, m(ds.get("avg")), m(ds.get("median")), m(ds.get("best")),
                     m(ds.get("worst")), p(ds.get("pct_ge_target")), p(ds.get("pct_loss")),
-                    m(ds.get("per_day"), 1), p(s_["wr"]), p(s_["be"]),
+                    ds.get("days", 0), m(ds.get("per_day"), 1), p(s_["wr"]), p(s_["be"]),
                     p(s_["dd"]), m(s_["final"])))
+    L.append("")
+    L.append("## The back half, same measures")
+    L.append("")
+    L.append("| variant | back net/day | median | best | worst | %losing | days | "
+             "trades | win% | req% | final |")
+    L.append("|---|---|---|---|---|---|---|---|---|---|---|")
+    for v in VARIANTS_:
+        b = back_st[v]
+        if not b:
+            L.append("| %s | n/a | n/a | n/a | n/a | n/a | 0 | 0 | n/a | n/a | n/a |" % v)
+            continue
+        bd = b["day"] or {}
+        L.append("| %s | %s | %s | %s | %s | %s | %d | %d | %s | %s | %s |"
+                 % (v, m(bd.get("avg")), m(bd.get("median")), m(bd.get("best")),
+                    m(bd.get("worst")), p(bd.get("pct_loss")), bd.get("days", 0),
+                    b["n"], p(b["wr"]), p(b["be"]), m(b["final"])))
+    L.append("")
+    L.append("A variant that is positive forward and negative back (or the other")
+    L.append("way round) has no edge - it has a half. The gate is forward, but the")
+    L.append("back half is what says whether the forward number will repeat.")
     L.append("")
     if no_dd:
         L.append("**No equity drawdown could be read for: %s.** The DD gate is "
@@ -1123,11 +1196,7 @@ def scalp_summary(ctx):
                 continue
             # like with like: a no-target variant is judged against the
             # no-target random, not against the one carrying the daily stop
-            ref = None
-            for c in entry_ctl:
-                if (c.endswith("_N")) == (v.endswith("_N")):
-                    ref = c
-                    break
+            ref = control_for(v)
             rnd = (st[ref]["day"] or {}) if ref else {}
             gap = (ds["avg"] - rnd["avg"]) if rnd.get("avg") is not None else None
             L.append("| %s | %.2f | %s | %s |"
@@ -1281,15 +1350,18 @@ def scalp_summary(ctx):
             avg = ds.get("avg")
             n = s_["n"]
             gap = None
-            for c in entry_ctl:
-                if (c.endswith("_N")) == (v.endswith("_N")) and c != v:
-                    r = (st[c]["day"] or {}).get("avg")
-                    if r is not None and avg is not None:
-                        gap = avg - r
-                    break
+            ref = control_for(v)
+            r = (st[ref]["day"] or {}).get("avg") if ref else None
+            if r is not None and avg is not None:
+                gap = avg - r
             why = []
             if avg is None or avg <= 0:
                 why.append("net/day <= 0")
+            b = back_st.get(v) or {}
+            bavg = (b.get("day") or {}).get("avg")
+            if bavg is not None and bavg <= 0:
+                why.append("back half %+.2f USD/day - the forward number did not"
+                           " repeat" % bavg)
             if n < 100:
                 why.append("%d trades < 100" % n)
             if s_["wr"] is None or s_["be"] is None or s_["wr"] <= s_["be"]:
@@ -1319,14 +1391,29 @@ def scalp_summary(ctx):
             L.append("| %s | %s |" % (v, "ok" if not why else why[0]))
         L.append("")
         L.append("A control is never a candidate: S5 judges the ENTRY, S11 judges the")
-        L.append("SPLIT. Passing means the idea is not just its own control.")
+        L.append("SPLIT. Gate 7 needs BOTH halves non-negative - round 1 measured a")
+        L.append("**-0.40 correlation** between the halves across 22 variants, so a")
+        L.append("forward-only pass is noise until the back half agrees.")
     L.append("")
 
     with open(os.path.join(rdir, "SUMMARY.md"), "w", encoding="utf-8") as f:
         f.write("\n".join(L) + "\n")
+    # ---- SUMMARY_BACK.md: the back half on its own ----------------------
+    # It used to be six header lines, which is why a 7-day backtest could look
+    # like a 19-day result and nobody could tell from the file.
+    head = L[:2] + ["**BACK half only.** The forward table and the gate verdict",
+                    "are in SUMMARY.md - this file exists so the back half cannot",
+                    "be skipped.", ""]
+    try:
+        i0 = L.index("## The back half, same measures")
+        i1 = next((k for k in range(i0 + 1, len(L)) if L[k].startswith("## ")), len(L))
+        back_sec = L[i0:i1]
+    except ValueError:
+        back_sec = ["## The back half, same measures", "", "No back rows in this batch."]
     with open(os.path.join(rdir, "SUMMARY_BACK.md"), "w", encoding="utf-8") as f:
-        f.write("\n".join(L[:6]) + "\n(back-only copy)\n")
+        f.write("\n".join(head + [""] + back_sec) + "\n")
     print("wrote %s" % os.path.join(rdir, "SUMMARY.md"))
+    print("wrote %s" % os.path.join(rdir, "SUMMARY_BACK.md"))
     return 0
 
 
