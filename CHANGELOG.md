@@ -1,3 +1,20 @@
+### Fixed
+* **The scalp summary crashed after the round-1 batch** (`pick(rep, [list])` ->
+  `TypeError: 'in <string>' requires string as left operand`). Cause: the
+  tester writes **one column per run**, so `pick_pair` answers "back vs
+  forward" with `None` for the drawdown and the fallback was handed a list.
+  `first_num()` now reads the first non-empty cell of a single-column row
+  (money and percent in one cell or two), and `pick()` accepts a list so a
+  call site can never take a finished 274-second batch down. A report that
+  really has no drawdown is named in the SUMMARY and blocks its own gate as
+  "drawdown not measured".
+* `summarize_batch.py` prints the **minimum deposit** for the target risk at
+  the measured median stop in the scalp SUMMARY too - the standing rule was
+  only enforced for the other families.
+* `TwinPulseScalp.mq5` compiles with **0 warnings**: the `OrderCalcMargin`
+  return is checked (warning 83) and the newest-position scan keeps a
+  `datetime` instead of a `ulong` (warning 45). `TPS 1.12`.
+
 ### Added (round-1 extension, before the first report)
 
 * **`InpMode` 0-5** in `TwinPulseScalp.mq5`: `0` single leg (the round-4
