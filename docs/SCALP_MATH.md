@@ -63,6 +63,15 @@ so the cap is **3** (`InpMaxPositions=3`). At 4 positions the margin level is
 With 3 positions the worst simultaneous loss at a 2.0 stop is 6 USD = 6% of
 the account. That is the risk budget the whole design has to live inside.
 
+**The one exception, and its price.** The owner asked for a fixed 2 BUY + 2 SELL
+book, which is 4 legs and 36 USD of margin - a 278% margin level on 100 USD.
+Those four presets (`S8`-`S11`) therefore run at `InpMinMarginLevel=250`
+instead of 300. The worst simultaneous loss at a 2.0 stop becomes 4 x 6 = 24
+USD, 24% of the account, and that is the real cost of the fourth leg - not the
+margin, the stop-out distance. If `SYMBOL_MARGIN_HEDGED` is 0 on this account
+the hedged side costs no margin at all and the fourth leg is free; the EA
+prints that number at startup, so the first run settles it.
+
 ## What the rounds have to show
 
 Per round, these four numbers decide whether to continue:

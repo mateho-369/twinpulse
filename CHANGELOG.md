@@ -1,3 +1,35 @@
+### Added (round-1 extension, before the first report)
+
+* **`InpMode` 0-5** in `TwinPulseScalp.mq5`: `0` single leg (the round-4
+  behaviour, unchanged), `1` fixed 2 BUY + 2 SELL, `2` fixed from the inputs,
+  `3` adaptive counts, `4` adaptive counts drawn at random (the control),
+  `5` hybrid (range -> hedge book, trend -> one directional leg).
+* **Adaptive BUY/SELL book.** Every M5 bar is scored from the EMA slope in ATR,
+  ADX and the Bollinger position, and the score picks `3/0, 2/1, 2/2, 1/2, 0/3`
+  legs. Every leg keeps its own broker stop, its own 2.0 ATR target and its own
+  trail; the book is rebalanced on the next bar only, never by force-closing a
+  profitable leg, and a closed side may only re-open when the survivor on the
+  other side is back to -0.10 USD or better. No averaging down, ever.
+* **The daily stop now closes everything.** It is measured on closed **plus
+  floating** P/L; on breach every leg is closed, the rows are tagged
+  `daily_exit`, and nothing opens until the next server day.
+* `InpDailyTargetUSD=0` switches the daily target off, and **every preset is
+  written twice** (`S1_Pullback` / `S1_Pullback_N`) so the target is measured
+  instead of assumed.
+* `tester/scalp/` grows to **22 presets**: `S8_Hedge4`, `S9_Hybrid`,
+  `S10_Adaptive`, `S11_AdaptiveRnd`, each with and without the target.
+* `tools/gen_scalp_presets.py` writes them from one table, in the exact input
+  order of the EA, so a new input can never silently shift a value.
+* CSV gains `split` (the book at the moment the leg closed) and `open_legs`,
+  and the EA logs its margin facts once per run: `ACCOUNT_MARGIN_MODE`,
+  `OrderCalcMargin` for 0.01 lot, `SYMBOL_MARGIN_HEDGED`, and the largest leg
+  count that fits at 300% and at 250%.
+* `summarize_batch.py`: median USD/day, % of days >= 50, % losing days, worst
+  day, a balance curve from the deposit, money per split, average and maximum
+  open legs, and a with/without-target table. The verdict now applies the
+  round-4 gates one by one and prints the first blocking reason per variant.
+  `--deposit` supplies the starting balance when a report is missing.
+
 ### Added
 
 * **Round 4 - the scalper.** `MQL5/Experts/TwinPulse/TwinPulseScalp.mq5`:

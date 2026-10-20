@@ -264,10 +264,17 @@ class Legs(object):
 
     @staticmethod
     def _close(r):
-        try:
-            return datetime.strptime(r["time"], "%Y.%m.%d %H:%M:%S")
-        except Exception:
-            return None
+        """The EA writes `2026.08.03 14:05:00`. Accept dashes and a missing
+        seconds field too, so a format change lowers the row into a warning
+        instead of silently emptying every per-day figure."""
+        t = (r.get("time") or "").strip()
+        for f in ("%Y.%m.%d %H:%M:%S", "%Y.%m.%d %H:%M",
+                  "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+            try:
+                return datetime.strptime(t, f)
+            except Exception:
+                pass
+        return None
 
     @staticmethod
     def _f(r, key):
@@ -857,7 +864,17 @@ def scalp_summary(ctx):
     rdir = ctx["rdir"]
     symbol = ctx["symbol"]
 
-    randoms = [v for v in VARIANTS_ if "random" in v.lower() or "rnd" in v.lower()]
+    # S5 is the ENTRY control (random entries, same exits); S11 is the COUNT
+    # control (same splits as S10, drawn at random). They answer two different
+    # questions and must never be compared against each other.
+    entry_ctl = [v for v in VARIANTS_ if "random" in v.lower()]
+    count_ctl = [v for v in VARIANTS_ if "rnd" in v.lower()]
+    randoms = entry_ctl + count_ctl
+
+    def money_rows(rows):
+        """the 'open' rows exist only to record how many legs were open; they
+        carry no money and must never be counted as a trade"""
+        return [r for r in rows if (r.get("reason") or "") != "open"]
 
     def day_stats(legs, rows, start, end):
         per = {}
@@ -873,19 +890,28 @@ def scalp_summary(ctx):
             return None
         vals = [v[0] for v in per.values()]
         days = (end.date() - start.date()).days
+        med = sorted(vals)
+        n = len(med)
+        median = med[n // 2] if n % 2 else (med[n // 2 - 1] + med[n // 2]) / 2.0
         return {
             "days": len(per), "calendar_days": max(days, 1),
             "avg": sum(vals) / len(vals),
+            "median": median,
             "best": max(vals), "worst": min(vals),
+            "pct_ge_target": 100.0 * len([v for v in vals if v >= SCALP_TARGET_USD_PER_DAY]) / len(vals),
+            "pct_loss": 100.0 * len([v for v in vals if v < 0]) / len(vals),
             "trades": sum(v[1] for v in per.values()),
             "per_day": float(sum(v[1] for v in per.values())) / len(per),
             "total": sum(vals),
+            "per_day_list": sorted(per.items()),
         }
 
     def stats(v):
         d = data[v]
         legs = d["legs"]
         rows = d["fwd_rows"] if d["fwd_rows"] else d["back_rows"]
+        legs_rows = rows
+        rows = money_rows(rows)
         vals = [legs.nval(r) for r in rows]
         wins = [x for x in vals if x > 0]
         losses = [x for x in vals if x < 0]
@@ -896,6 +922,10 @@ def scalp_summary(ctx):
         if aw and al:
             be = 100.0 * abs(al) / (aw + abs(al))
         ds = day_stats(legs, rows, fwd_start, d_to)
+        legs_all = [int(legs._f(r, "open_legs")) for r in legs_rows
+                    if (r.get("open_legs") or "").strip() != ""]
+        avg_legs = (sum(legs_all) / len(legs_all)) if legs_all else None
+        max_legs = max(legs_all) if legs_all else None
         rep = d["report_fwd"] if d["report_fwd"] else d["report_back"]
         dep = None
         dd = None
@@ -917,10 +947,11 @@ def scalp_summary(ctx):
             "net": sum(vals), "gross": gross, "spread": spread_paid,
             "n": len(vals), "wins": len(wins), "wr": wr,
             "aw": aw, "al": al, "be": be,
-            "dd": dd, "deposit": dep,
+            "dd": dd, "deposit": dep if dep is not None else ctx.get("deposit"),
             "final": (dep + sum(vals)) if dep is not None else None,
             "day": ds,
             "be_day": (legs, rows),
+            "avg_legs": avg_legs, "max_legs": max_legs,
             "endtest": _end_of_test_deals(rdir, v),
         }
 
@@ -948,20 +979,35 @@ def scalp_summary(ctx):
         L.append("")
     L.append("## The one table")
     L.append("")
-    L.append("| variant | net/day avg | best day | worst day | trades/day | win% | req% | "
-             "avg win | avg loss | gross | spread/day | DD | final | end-test |")
-    L.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    L.append("| variant | net/day avg | median | best | worst | %days>=50 | %losing | "
+             "trades/day | win% | req% | DD | final |")
+    L.append("|---|---|---|---|---|---|---|---|---|---|---|---|")
     for v in VARIANTS_:
         s_ = st[v]
         ds = s_["day"] or {}
         spd = None
         if s_["spread"] is not None and ds.get("days"):
             spd = s_["spread"] / ds["days"]
-        L.append("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %d |"
-                 % (v, m(ds.get("avg")), m(ds.get("best")), m(ds.get("worst")),
+        L.append("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |"
+                 % (v, m(ds.get("avg")), m(ds.get("median")), m(ds.get("best")),
+                    m(ds.get("worst")), p(ds.get("pct_ge_target")), p(ds.get("pct_loss")),
                     m(ds.get("per_day"), 1), p(s_["wr"]), p(s_["be"]),
-                    m(s_["aw"]), m(s_["al"]), m(s_["gross"]), m(spd),
-                    p(s_["dd"]), m(s_["final"]), s_["endtest"]))
+                    p(s_["dd"]), m(s_["final"])))
+    L.append("")
+    L.append("")
+    L.append("## Cost and payoff")
+    L.append("")
+    L.append("| variant | gross before spread | spread paid/day | avg win | avg loss | avg legs | max legs |")
+    L.append("|---|---|---|---|---|---|---|")
+    for v in VARIANTS_:
+        s_ = st[v]
+        ds = s_["day"] or {}
+        spd = None
+        if s_["spread"] is not None and ds.get("days"):
+            spd = s_["spread"] / ds["days"]
+        L.append("| %s | %s | %s | %s | %s | %s | %s |"
+                 % (v, m(s_["gross"]), m(spd), m(s_["aw"]), m(s_["al"]),
+                    m(s_["avg_legs"], 2), "n/a" if s_["max_legs"] is None else str(s_["max_legs"])))
     L.append("")
     L.append("`req%` = the win rate the measured avg win / avg loss would need to break")
     L.append("even. If `win%` < `req%` the variant loses by construction, whatever the")
@@ -978,10 +1024,16 @@ def scalp_summary(ctx):
             best = (v, ds["avg"])
     if best:
         gap = SCALP_TARGET_USD_PER_DAY - best[1]
-        L.append("Best variant **%s**: **%.2f USD/day** average vs the %.0f USD target - "
-                 "**gap %.2f USD/day** (%.0f%% of the target)."
-                 % (best[0], best[1], SCALP_TARGET_USD_PER_DAY, gap,
+        bd = st[best[0]]["day"] or {}
+        L.append("**best average USD/day = %.2f vs target %.0f** - variant `%s`, "
+                 "gap %.2f USD/day (%.0f%% of the target)."
+                 % (best[1], SCALP_TARGET_USD_PER_DAY, best[0], gap,
                     100.0 * best[1] / SCALP_TARGET_USD_PER_DAY))
+        L.append("")
+        L.append("Its median day is %.2f USD, %s of days reach 50 USD, %s of days "
+                 "lose money, and the worst day is %s USD."
+                 % (bd.get("median") or 0.0, p(bd.get("pct_ge_target")),
+                    p(bd.get("pct_loss")), m(bd.get("worst"))))
     else:
         L.append("No daily figure available.")
     L.append("")
@@ -989,21 +1041,41 @@ def scalp_summary(ctx):
     # ---- random control ---------------------------------------------------
     L.append("## Control")
     L.append("")
-    if randoms:
-        for v in randoms:
+    if entry_ctl:
+        for v in entry_ctl:
             ds = st[v]["day"] or {}
-            L.append("* `%s` (random entry, identical exits): %.2f USD/day, win %s"
+            L.append("* `%s` - random ENTRY, identical exits: %.2f USD/day, win %s"
                      % (v, ds.get("avg", 0.0), p(st[v]["wr"])))
+        L.append("")
+        L.append("| variant | USD/day | vs its own target setting | beats the entry control by |")
+        L.append("|---|---|---|---|")
         for v in VARIANTS_:
-            if v in randoms:
+            if v in entry_ctl:
                 continue
             ds = st[v]["day"] or {}
-            rnd = st[randoms[0]]["day"] or {}
-            if ds.get("avg") is not None and rnd.get("avg") is not None:
-                L.append("* `%s` minus control: %+.2f USD/day"
-                         % (v, ds["avg"] - rnd["avg"]))
+            if ds.get("avg") is None:
+                continue
+            # like with like: a no-target variant is judged against the
+            # no-target random, not against the one carrying the daily stop
+            ref = None
+            for c in entry_ctl:
+                if (c.endswith("_N")) == (v.endswith("_N")):
+                    ref = c
+                    break
+            rnd = (st[ref]["day"] or {}) if ref else {}
+            gap = (ds["avg"] - rnd["avg"]) if rnd.get("avg") is not None else None
+            L.append("| %s | %.2f | %s | %s |"
+                     % (v, ds["avg"], "no target" if v.endswith("_N") else "target on",
+                        "n/a" if gap is None else "%+.2f" % gap))
+        L.append("")
     else:
-        L.append("No random control in this batch - the entry cannot be judged.")
+        L.append("No random entry control in this batch - the entry cannot be judged.")
+    if count_ctl:
+        L.append("")
+        L.append("The COUNT control: the same 3/0-2/2 splits, drawn at random")
+        L.append("instead of from the score. `%s` is what S10 must beat."
+                 % ", ".join("`%s`" % c for c in count_ctl))
+        L.append("")
     L.append("")
 
     # ---- exits and hours --------------------------------------------------
@@ -1055,27 +1127,131 @@ def scalp_summary(ctx):
     L.append("the end of the run: those deals are in the report and not in the CSV.")
     L.append("")
 
-    L.append("## Verdict")
+    # ---- the BUY/SELL split (S8..S11) -----------------------------------
+    splits_seen = any((r.get("split") or "") != "" for v in VARIANTS_ for r in st[v]["rows"])
+    if splits_seen:
+        L.append("## How many legs of each side, and what each split earned")
+        L.append("")
+        L.append("| variant | split | closed legs | net |")
+        L.append("|---|---|---|---|")
+        for v in VARIANTS_:
+            agg = {}
+            legs = st[v]["legs"]
+            for r in st[v]["rows"]:
+                k = (r.get("split") or "?").strip()
+                if k == "":
+                    k = "?"
+                a = agg.setdefault(k, [0, 0.0])
+                a[0] += 1
+                a[1] += legs.nval(r)
+            for k in sorted(agg):
+                L.append("| %s | %s | %d | %.2f |" % (v, k, agg[k][0], agg[k][1]))
+        L.append("")
+        L.append("The split recorded on a leg is the book at the moment it CLOSED.")
+        L.append("")
+
+    # ---- balance curve ---------------------------------------------------
+    L.append("## Balance curve (forward half, from the deposit)")
+    L.append("")
+    L.append("| variant | deposit | low | high | month ends | final |")
+    L.append("|---|---|---|---|---|---|")
+    for v in VARIANTS_:
+        s_ = st[v]
+        legs = s_["legs"]
+        bal = s_["deposit"]
+        if bal is None or not s_["rows"]:
+            L.append("| %s | n/a | n/a | n/a | n/a | n/a |" % v)
+            continue
+        lo = bal
+        hi = bal
+        cur = bal
+        months = {}
+        for r in sorted(s_["rows"], key=lambda x: x.get("time", "")):
+            cur += legs.nval(r)
+            lo = min(lo, cur)
+            hi = max(hi, cur)
+            months[r.get("time", "")[:7]] = cur
+        mends = ", ".join("%s %.2f" % (k, months[k]) for k in sorted(months))
+        L.append("| %s | %.2f | %.2f | %.2f | %s | %.2f |"
+                 % (v, bal, lo, hi, mends, cur))
+    L.append("")
+
+    # ---- with / without the daily target ---------------------------------
+    # `X` carries the 50 USD target, `X_N` is the same EA with it switched off
+    pairs = []
+    for v in VARIANTS_:
+        if v.endswith("_N") and v[:-2] in VARIANTS_:
+            pairs.append((v[:-2], v))
+    if pairs:
+        L.append("## The daily target: with vs without")
+        L.append("")
+        L.append("| variant | no target USD/day | with target USD/day | delta | "
+                 "no target %losing | with target %losing | no target worst | with target worst |")
+        L.append("|---|---|---|---|---|---|---|---|")
+        for base, off in pairs:
+            a = st[off]["day"] or {}
+            b = st[base]["day"] or {}
+            if a.get("avg") is None or b.get("avg") is None:
+                continue
+            L.append("| %s | %.2f | %.2f | %+.2f | %s | %s | %s | %s |"
+                     % (base, a["avg"], b["avg"], b["avg"] - a["avg"],
+                        p(a.get("pct_loss")), p(b.get("pct_loss")),
+                        m(a.get("worst")), m(b.get("worst"))))
+        L.append("")
+        L.append("A daily target that *raises* the average is cutting losing days")
+        L.append("early; one that *lowers* it is cutting good days short.")
+        L.append("")
+
+    L.append("## Verdict (docs/DECISION_RULES_3.md)")
     L.append("")
     if missing:
         L.append("**NO VERDICT** - incomplete batch.")
     else:
         passing = []
+        rows = []
         for v in VARIANTS_:
             s_ = st[v]
+            ds = s_["day"] or {}
+            avg = ds.get("avg")
+            n = s_["n"]
+            gap = None
+            for c in entry_ctl:
+                if (c.endswith("_N")) == (v.endswith("_N")) and c != v:
+                    r = (st[c]["day"] or {}).get("avg")
+                    if r is not None and avg is not None:
+                        gap = avg - r
+                    break
+            why = []
+            if avg is None or avg <= 0:
+                why.append("net/day <= 0")
+            if n < 100:
+                why.append("%d trades < 100" % n)
+            if s_["wr"] is None or s_["be"] is None or s_["wr"] <= s_["be"]:
+                why.append("win rate below its break-even rate")
+            if s_["dd"] is not None and s_["dd"] > 35.0:
+                why.append("DD %.1f%% > 35%%" % s_["dd"])
+            if gap is not None and gap < 0.20:
+                why.append("beats its control by only %+.2f" % gap)
+            if not why and v not in randoms:
+                passing.append(v)
+            rows.append((v, why))
+        if passing:
+            L.append("**PASS the screening gates: %s.**" % ", ".join(passing))
+            L.append("Screening is Model=1 (M1 OHLC). Before any demo the winner must")
+            L.append("be re-run on Model=4 (real ticks) over the same period and pass")
+            L.append("again; only then does it go to an Exness DEMO with AllowLive=false.")
+        else:
+            L.append("**No variant passes the screening gates.**")
+        L.append("")
+        L.append("| variant | first blocking reason |")
+        L.append("|---|---|")
+        for v, why in rows:
             if v in randoms:
                 continue
-            ds = s_["day"] or {}
-            if (ds.get("avg") or 0) > 0 and s_["wr"] is not None and                s_["be"] is not None and s_["wr"] > s_["be"]:
-                passing.append(v)
-        if passing:
-            L.append("**Positive after cost: %s** - win rate above the break-even win"
-                     % ", ".join(passing))
-            L.append("rate. Still not a demo candidate until the real-tick run agrees.")
-        else:
-            L.append("**No variant is positive after cost.** Every one has a win rate")
-            L.append("below its own break-even rate, so the exits lose before the entry")
-            L.append("matters. Change the payoff, not the signal.")
+            L.append("| %s | %s |" % (v, "ok" if not why else why[0]))
+        L.append("")
+        L.append("A control is never a candidate: S5 judges the ENTRY, S11 judges the")
+        L.append("SPLIT. Passing means the idea is not just its own control.")
     L.append("")
 
     with open(os.path.join(rdir, "SUMMARY.md"), "w", encoding="utf-8") as f:
@@ -1101,6 +1277,9 @@ def main():
                     help="which rulebook to apply: hedge | trend | reversal. "
                          "Default: detected from the reports folder name; "
                          "an unknown folder is an error, never a guess.")
+    ap.add_argument("--deposit", type=float, default=None,
+                    help="account deposit of the run; used for the balance curve "
+                         "and the margin cap when the report is missing")
     ap.add_argument("--risk-pct", dest="risk_pct", type=float, default=0.5,
                     help="risk per trade the EA is sized to, %% of equity (default 0.5)")
     ap.add_argument("--sl-atr", dest="sl_atr", type=float, default=2.5,
@@ -1349,6 +1528,7 @@ def main():
             "d_from": d_from, "d_to": d_to, "fwd_start": fwd_start,
             "missing": missing, "stale_warning": stale_warning,
             "posnet": posnet, "pair": pair, "rdir": rdir, "symbol": args.symbol,
+            "deposit": args.deposit,
         })
 
     if FAMILY != "hedge":

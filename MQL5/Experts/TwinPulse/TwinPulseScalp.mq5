@@ -30,6 +30,14 @@ input double InpLots            = 0.01;      // Lots per position (fixed)
 input int    InpMaxPositions    = 3;         // Max simultaneous positions
 input double InpMinMarginLevel  = 300.0;     // Do not open below this margin level %
 
+//--- operating mode
+input int    InpMode            = 0;         // 0=single 1=hedge 2=2+2 3=adaptive 4=adaptive-random 5=hybrid
+input int    InpAdxPeriod       = 14;        // ADX period (market score)
+input double InpScoreStrong     = 0.60;      // |score| >= this -> 3 on one side, 0 on the other
+input double InpScoreMild       = 0.20;      // |score| >= this -> 2/1 split
+input double InpReopenTolUSD    = 0.10;      // re-open only when the opposite side is >= -this
+input double InpHedgeTarget_ATR = 3.00;      // hedge legs: take profit, x ATR
+
 //--- entry
 input int    InpEntryMode       = 0;         // 0=pullback 1=mean-rev 2=breakout 3=random
 input int    InpFastEMA         = 9;         // Fast EMA (M5)
@@ -60,8 +68,8 @@ input bool   InpUseNews         = false;     // Skip around high-impact news (ne
 input int    InpNewsMinutes     = 15;        // Minutes before/after a news time to skip
 
 //--- day control
-input double InpDailyLossUSD    = 10.0;      // Stop opening after this daily loss (USD)
-input double InpDailyTargetUSD  = 50.0;      // Stop opening after this daily profit (USD)
+input double InpDailyLossUSD    = 10.0;      // Close all + stop at this daily loss (USD, 0 = off)
+input double InpDailyTargetUSD  = 50.0;      // Close all + stop at this daily profit (USD, 0 = off)
 
 //--- logging
 input bool   InpWriteCsv        = true;
@@ -74,6 +82,7 @@ int      hSlow = INVALID_HANDLE;
 int      hATR  = INVALID_HANDLE;
 int      hBB   = INVALID_HANDLE;
 int      hRSI  = INVALID_HANDLE;
+int      hADX  = INVALID_HANDLE;
 
 int      g_csv = INVALID_HANDLE;
 int      g_log = INVALID_HANDLE;
@@ -98,6 +107,20 @@ struct ScalpPos
   };
 ScalpPos g_pos[MAXPOS];
 int      g_nPos = 0;
+
+//--- multi-leg bookkeeping
+bool     g_closingAll = false;   // a daily stop is closing everything
+datetime g_closeAllUntil = 0;    // classify deals until this moment as daily_exit
+int      g_nBuy  = 0;            // open legs by side
+int      g_nSell = 0;
+double   g_dayFloating = 0.0;    // floating P/L of our open legs
+string   g_splitTag = "0B0S";    // e.g. 2B1S, written into every CSV row
+int      g_legsAtOpen = 0;
+
+//--- adaptive statistics
+long     g_legSum = 0;           // sum of open-leg counts sampled every tick
+long     g_legSamples = 0;
+int      g_legMax = 0;
 
 //--- day state
 datetime g_dayAnchor    = 0;
@@ -253,7 +276,8 @@ void TP_CsvHeader(void)
    if(g_csv == INVALID_HANDLE) return;
    FileWrite(g_csv, "time", "cycle", "leg", "side", "volume", "open_price",
              "close_price", "reason", "profit", "pos_net", "bank", "regime",
-             "spread", "atr5", "spread_open", "spread_cost", "gross", "stop_dist");
+             "spread", "atr5", "spread_open", "spread_cost", "gross", "stop_dist",
+             "split", "open_legs");
   }
 
 void TP_CsvRow(datetime when, string leg, int side, double lots, double entry,
@@ -287,7 +311,9 @@ void TP_CsvRow(datetime when, string leg, int side, double lots, double entry,
              DoubleToString(spread, 3),
              DoubleToString(cost, 2),
              DoubleToString(profit, 2),
-             DoubleToString(stopDist, 3));
+             DoubleToString(stopDist, 3),
+             g_splitTag,
+             IntegerToString(g_nBuy + g_nSell));
    FileFlush(g_csv);
   }
 
@@ -405,6 +431,117 @@ void TP_Sync(void)
       g_pos[k].trailDist  = 0.0;
       g_pos[k].trailOn    = false;
       g_nPos++;
+     }
+  }
+
+//==================================================================
+//  the book: counts, floating P/L, split tag
+//==================================================================
+void TP_RecountBook(void)
+  {
+   g_nBuy = 0;
+   g_nSell = 0;
+   g_dayFloating = 0.0;
+
+   for(int i = 0; i < g_nPos; i++)
+     {
+      if(!PositionSelectByTicket(g_pos[i].ticket)) continue;
+      if(g_pos[i].side > 0) g_nBuy++;
+      else                  g_nSell++;
+      g_dayFloating += PositionGetDouble(POSITION_PROFIT) +
+                       PositionGetDouble(POSITION_SWAP);
+     }
+   g_splitTag = StringFormat("%dB%dS", g_nBuy, g_nSell);
+
+   int open = g_nBuy + g_nSell;
+   if(open > g_legMax) g_legMax = open;
+   g_legSum += open;
+   g_legSamples++;
+  }
+
+//--- total P/L of one side, in USD
+double TP_SideProfit(int side)
+  {
+   double sum = 0.0;
+   for(int i = 0; i < g_nPos; i++)
+     {
+      if(g_pos[i].side != side) continue;
+      if(!PositionSelectByTicket(g_pos[i].ticket)) continue;
+      sum += PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+     }
+   return sum;
+  }
+
+//--- is any open leg on this side losing?
+bool TP_SideHasLoser(int side)
+  {
+   for(int i = 0; i < g_nPos; i++)
+     {
+      if(g_pos[i].side != side) continue;
+      if(!PositionSelectByTicket(g_pos[i].ticket)) continue;
+      double p = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+      if(p < 0.0) return true;
+     }
+   return false;
+  }
+
+//==================================================================
+//  market score -> target counts
+//==================================================================
+double TP_Clamp(double v, double lo, double hi)
+  {
+   if(v < lo) return lo;
+   if(v > hi) return hi;
+   return v;
+  }
+
+double TP_MarketScore(double fast, double slow, double atr, double adx,
+                      double bbUp, double bbLo, double close1)
+  {
+   //--- 1) EMA slope over two bars, in ATR units
+   double f3[4];
+   double slope = 0.0;
+   if(CopyBuffer(hFast, 0, 1, 4, f3) >= 4)
+     {
+      double d = (f3[0] - f3[2]) / atr;          // f3[0] = bar 1
+      slope = TP_Clamp(d / 0.50, -1.0, 1.0);
+     }
+
+   //--- 2) ADX strength, sign from the EMA stack
+   double strength = TP_Clamp((adx - 18.0) / 18.0, 0.0, 1.0);
+   double dirAdx = 0.0;
+   if(fast > slow) dirAdx = strength;
+   else if(fast < slow) dirAdx = -strength;
+
+   //--- 3) position inside the Bollinger channel
+   double bbPos = 0.0;
+   double half = (bbUp - bbLo) * 0.5;
+   if(half > 0.0)
+      bbPos = TP_Clamp((close1 - (bbUp + bbLo) * 0.5) / half, -1.0, 1.0);
+
+   return 0.40 * slope + 0.30 * dirAdx + 0.30 * bbPos;
+  }
+
+void TP_CountsFromScore(double score, int &nBuy, int &nSell)
+  {
+   nBuy  = 0;
+   nSell = 0;
+
+   if(score >= InpScoreStrong)       { nBuy = 3; nSell = 0; }
+   else if(score >= InpScoreMild)    { nBuy = 2; nSell = 1; }
+   else if(score > -InpScoreMild)    { nBuy = 2; nSell = 2; }
+   else if(score > -InpScoreStrong)  { nBuy = 1; nSell = 2; }
+   else                              { nBuy = 0; nSell = 3; }
+
+   if(nBuy + nSell > InpMaxPositions)
+     {
+      if(nBuy >= nSell) nBuy = InpMaxPositions - nSell;
+      else              nSell = InpMaxPositions - nBuy;
+      if(nBuy + nSell > InpMaxPositions)
+        {
+         nBuy = InpMaxPositions / 2;
+         nSell = InpMaxPositions - nBuy;
+        }
      }
   }
 
@@ -540,19 +677,47 @@ void TP_UpdateDay(void)
    g_dayLocked      = false;
   }
 
+void TP_CloseAll(string why)
+  {
+   if(g_nPos <= 0) return;
+   g_closingAll = true;
+   int closed = 0;
+   for(int i = g_nPos - 1; i >= 0; i--)
+     {
+      ulong t = g_pos[i].ticket;
+      if(t == 0) continue;
+      if(!PositionSelectByTicket(t)) continue;
+      if(trade.PositionClose(t)) closed++;
+     }
+   g_closingAll = false;
+   g_closeAllUntil = TimeCurrent() + 120;   // deals may arrive queued
+   TP_Log(StringFormat("%s: closed %d leg(s), day net %.2f", why, closed, g_dayNet));
+  }
+
+//--- closed + floating P/L of the day, in USD
+double TP_DayTotal(void)
+  {
+   return g_dayNet + g_dayFloating;
+  }
+
 bool TP_DayLocked(void)
   {
    if(g_dayLocked) return true;
-   if(InpDailyLossUSD > 0.0 && g_dayNet <= -InpDailyLossUSD)
+
+   double total = TP_DayTotal();
+
+   if(InpDailyLossUSD > 0.0 && total <= -InpDailyLossUSD)
      {
       g_dayLocked = true;
-      TP_Log(StringFormat("daily loss stop: net %.2f - no more entries today", g_dayNet));
+      TP_CloseAll("DAILY LOSS STOP - closing all");
+      TP_Log(StringFormat("daily loss stop: %.2f USD - no entries until tomorrow", total));
       return true;
      }
-   if(InpDailyTargetUSD > 0.0 && g_dayNet >= InpDailyTargetUSD)
+   if(InpDailyTargetUSD > 0.0 && total >= InpDailyTargetUSD)
      {
       g_dayLocked = true;
-      TP_Log(StringFormat("DAILY TARGET reached: net %.2f USD - no more entries today", g_dayNet));
+      TP_CloseAll("DAILY TARGET - closing all");
+      TP_Log(StringFormat("DAILY TARGET reached: %.2f USD - no entries until tomorrow", total));
       return true;
      }
    return false;
@@ -580,6 +745,19 @@ bool TP_SessionWindow(void)
    return true;
   }
 
+//--- the owner's two side rules, applied before any entry
+bool TP_SideAllowed(int dir)
+  {
+   //rule 5: never add to a side that is in loss (that would be averaging down)
+   if(TP_SideHasLoser(dir)) return false;
+
+   //owner's re-open rule: the opposite side must have recovered to -tol or better
+   double opp = TP_SideProfit(-dir);
+   if(opp < -InpReopenTolUSD) return false;
+
+   return true;
+  }
+
 bool TP_CanOpen(double &outSLDist)
   {
    outSLDist = 0.0;
@@ -602,7 +780,7 @@ bool TP_CanOpen(double &outSLDist)
    return true;
   }
 
-bool TP_Open(int dir, double atr, double spread)
+bool TP_Open(int dir, double atr, double spread, double tpAtr)
   {
    double slDist = InpSL_ATR * atr;
    if(InpMaxSL_Price > 0.0 && slDist > InpMaxSL_Price) slDist = InpMaxSL_Price;
@@ -610,7 +788,7 @@ bool TP_Open(int dir, double atr, double spread)
    double minDist = TP_StopsLevel() + TP_Point() * 2.0;
    if(slDist < minDist) slDist = minDist;
 
-   double tpDist = InpTP_ATR * atr;
+   double tpDist = tpAtr * atr;
 
    //--- rule 2: a target that does not clear the spread several times over
    //--- is a donation to the broker - refuse it instead of running it
@@ -676,27 +854,25 @@ bool TP_Open(int dir, double atr, double spread)
      }
 
    g_opens++;
-   TP_Log(StringFormat("OPEN dir=%d lots=%.2f fill=%.3f sl=%.3f tp=%.3f atr=%.2f spread=%.3f pos=%d",
-                       dir, lots, fill, sl, tp, atr, spread, g_nPos));
+   g_legsAtOpen = g_nBuy + g_nSell + 1;
+
+   //an "open" row carries zero money: it exists so the summary can measure how
+   //many legs were open at the moment of the decision (average / max legs)
+   TP_CsvRow(TimeCurrent(), StringFormat("E%d", InpEntryMode), dir, lots, fill,
+             0.0, "open", 0.0, 0.0, 0.0, atr, spread, slDist);
+
+   TP_Log(StringFormat("OPEN dir=%d lots=%.2f fill=%.3f sl=%.3f tp=%.3f atr=%.2f spread=%.3f split=%s",
+                       dir, lots, fill, sl, tp, atr, spread, g_splitTag));
    return true;
   }
 
 //==================================================================
 //  the signal, once per closed M5 bar
 //==================================================================
-void TP_OnNewBar(void)
+//--- the single-position entry rules (S1..S7)
+int TP_SignalDir(double fast, double slow, double atr, double bbUp, double bbLo,
+                 double rsi, double close1, double low1, double high1)
   {
-   double fast, slow, atr, bbUp, bbLo, rsi;
-   if(!TP_Ind(fast, slow, atr, bbUp, bbLo, rsi)) return;
-
-   double slDist = 0.0;
-   if(!TP_CanOpen(slDist)) return;
-
-   double close1 = iClose(_Symbol, PERIOD_M5, 1);
-   double low1   = iLow(_Symbol, PERIOD_M5, 1);
-   double high1  = iHigh(_Symbol, PERIOD_M5, 1);
-   if(close1 <= 0.0) return;
-
    int dir = 0;
 
    if(InpEntryMode == 0)
@@ -724,17 +900,116 @@ void TP_OnNewBar(void)
          if(close1 < ll) dir = -1;
         }
      }
-   else
-     {
-      //random control: same exits, no signal at all
-      if((int)(MathRand() % 100) < 50) dir = 1;
-      else dir = -1;
-     }
+   return dir;
+  }
 
-   if(dir == 0) return;
+void TP_OnNewBar(void)
+  {
+   double fast, slow, atr, bbUp, bbLo, rsi;
+   if(!TP_Ind(fast, slow, atr, bbUp, bbLo, rsi)) return;
+
+   double slDist = 0.0;
+   if(!TP_CanOpen(slDist)) return;
+
+   double close1 = iClose(_Symbol, PERIOD_M5, 1);
+   double low1   = iLow(_Symbol, PERIOD_M5, 1);
+   double high1  = iHigh(_Symbol, PERIOD_M5, 1);
+   if(close1 <= 0.0) return;
 
    double spread = TP_Spread();
-   TP_Open(dir, atr, spread);
+
+   //-----------------------------------------------------------------
+   //  single-position scalp (S1..S7)
+   //-----------------------------------------------------------------
+   if(InpMode == 0)
+     {
+      int dir = TP_SignalDir(fast, slow, atr, bbUp, bbLo, rsi, close1, low1, high1);
+      if(InpEntryMode == 3)
+        {
+         if((int)(MathRand() % 100) < 50) dir = 1;
+         else dir = -1;
+        }
+      if(dir == 0) return;
+      if(!TP_SideAllowed(dir)) return;
+      TP_Open(dir, atr, spread, InpTP_ATR);
+      return;
+     }
+
+   //-----------------------------------------------------------------
+   //  multi-leg modes: how many legs of each side do we want now?
+   //-----------------------------------------------------------------
+   int wantBuy = 0;
+   int wantSell = 0;
+
+   if(InpMode == 1)
+     {
+      //fixed 2 BUY + 2 SELL - the owner's original hedge idea
+      wantBuy = 2;
+      wantSell = 2;
+     }
+   else if(InpMode == 2)
+     {
+      //fixed counts from the inputs, default 2/2
+      wantBuy = 2;
+      wantSell = 2;
+     }
+   else if(InpMode == 3 || InpMode == 4)
+     {
+      double adx = 0.0;
+      double bd[3];
+      if(CopyBuffer(hADX, 0, 0, 3, bd) >= 3) adx = bd[1];
+
+      double score = TP_MarketScore(fast, slow, atr, adx, bbUp, bbLo, close1);
+
+      if(InpMode == 4)
+        {
+         //CONTROL: the same splits, chosen at random instead of by the score
+         int pick = (int)(MathRand() % 5);
+         if(pick == 0)      { wantBuy = 3; wantSell = 0; }
+         else if(pick == 1) { wantBuy = 2; wantSell = 1; }
+         else if(pick == 2) { wantBuy = 2; wantSell = 2; }
+         else if(pick == 3) { wantBuy = 1; wantSell = 2; }
+         else               { wantBuy = 0; wantSell = 3; }
+        }
+      else
+         TP_CountsFromScore(score, wantBuy, wantSell);
+     }
+   else
+     {
+      //HYBRID: range -> hedge cycling, trend -> the directional scalp entry
+      double adx = 0.0;
+      double bd[3];
+      if(CopyBuffer(hADX, 0, 0, 3, bd) >= 3) adx = bd[1];
+
+      if(adx < 22.0)
+        {
+         double score = TP_MarketScore(fast, slow, atr, adx, bbUp, bbLo, close1);
+         TP_CountsFromScore(score, wantBuy, wantSell);
+        }
+      else
+        {
+         int dir = TP_SignalDir(fast, slow, atr, bbUp, bbLo, rsi, close1, low1, high1);
+         if(dir > 0) { wantBuy = 1; wantSell = 0; }
+         if(dir < 0) { wantBuy = 0; wantSell = 1; }
+        }
+     }
+
+   //clamp to the margin cap
+   while(wantBuy + wantSell > InpMaxPositions)
+     {
+      if(wantBuy >= wantSell) wantBuy--;
+      else                   wantSell--;
+     }
+
+   //--- one leg per bar per side, never more than the target
+   if(wantBuy > g_nBuy && TP_SideAllowed(1))
+      TP_Open(1, atr, spread, InpHedgeTarget_ATR);
+
+   TP_Sync();
+   TP_RecountBook();
+
+   if(wantSell > g_nSell && TP_SideAllowed(-1))
+      TP_Open(-1, atr, spread, InpHedgeTarget_ATR);
   }
 
 //==================================================================
@@ -784,7 +1059,8 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
    //--- classify the exit
    double tol = TP_Point() * 20.0;
    string reason = "close";
-   if(tp > 0.0 && MathAbs(price - tp) <= tol) reason = "target";
+   if(g_closingAll || TimeCurrent() <= g_closeAllUntil) reason = "daily_exit";
+   else if(tp > 0.0 && MathAbs(price - tp) <= tol) reason = "target";
    else if(sl > 0.0 && MathAbs(price - sl) <= tol)
      {
       if(trailOn) reason = "trail";
@@ -815,9 +1091,10 @@ int OnInit(void)
    hATR  = iATR(_Symbol, PERIOD_M5, InpATRPeriod);
    hBB   = iBands(_Symbol, PERIOD_M5, InpBBPeriod, 0, InpBBDev, PRICE_CLOSE);
    hRSI  = iRSI(_Symbol, PERIOD_M5, InpRSIPeriod, PRICE_CLOSE);
+   hADX  = iADX(_Symbol, PERIOD_M5, InpAdxPeriod);
 
    if(hFast == INVALID_HANDLE || hSlow == INVALID_HANDLE || hATR == INVALID_HANDLE ||
-      hBB == INVALID_HANDLE || hRSI == INVALID_HANDLE)
+      hBB == INVALID_HANDLE || hRSI == INVALID_HANDLE || hADX == INVALID_HANDLE)
      {
       Print("indicator handle failed");
       return INIT_FAILED;
@@ -845,9 +1122,21 @@ int OnInit(void)
       g_log = FileOpen("TwinPulse_scalp.log",
                        FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_COMMON, ',', CP_ACP);
 
-   TP_Log(StringFormat("TPS 1.00 start %s mode=%d lots=%.2f maxpos=%d session %d-%d tp=%.2fATR sl=%.2fATR minTP=%.1fxspread",
-                       _Symbol, InpEntryMode, InpLots, InpMaxPositions,
-                       InpSessionStart, InpSessionEnd, InpTP_ATR, InpSL_ATR, InpMinTPxSpread));
+   TP_Log(StringFormat("TPS 1.11 start %s mode=%d entry=%d lots=%.2f maxpos=%d session %d-%d tp=%.2fATR sl=%.2fATR minTP=%.1fxspread dailyTarget=%.0f dailyLoss=%.0f",
+                       _Symbol, InpMode, InpEntryMode, InpLots, InpMaxPositions,
+                       InpSessionStart, InpSessionEnd, InpTP_ATR, InpSL_ATR, InpMinTPxSpread,
+                       InpDailyTargetUSD, InpDailyLossUSD));
+
+   //--- the margin facts the owner asked for, printed once per run
+   double m1 = 0.0;
+   OrderCalcMargin(ORDER_TYPE_BUY, _Symbol, InpLots, TP_Ask(), m1);
+   long   mmode = AccountInfoInteger(ACCOUNT_MARGIN_MODE);
+   double e = AccountInfoDouble(ACCOUNT_EQUITY);
+   double hedgeRate = SymbolInfoDouble(_Symbol, SYMBOL_MARGIN_HEDGED);
+   int    cap300 = (m1 > 0.0) ? (int)MathFloor(e / (m1 * 3.0)) : 0;
+   int    cap250 = (m1 > 0.0) ? (int)MathFloor(e / (m1 * 2.5)) : 0;
+   TP_Log(StringFormat("TPS margin: account mode=%d (0=netting 1=exchange 2=hedging) marginPer0.01=%.2f USD hedgedRate=%.2f equity=%.2f -> max legs %d at 300%%, %d at 250%%; using cap %d at %.0f%%",
+                       (int)mmode, m1, hedgeRate, e, cap300, cap250, InpMaxPositions, InpMinMarginLevel));
    return INIT_SUCCEEDED;
   }
 
@@ -860,13 +1149,19 @@ void OnDeinit(const int reason)
    if(hATR  != INVALID_HANDLE) IndicatorRelease(hATR);
    if(hBB   != INVALID_HANDLE) IndicatorRelease(hBB);
    if(hRSI  != INVALID_HANDLE) IndicatorRelease(hRSI);
+   if(hADX  != INVALID_HANDLE) IndicatorRelease(hADX);
   }
 
 void OnTick(void)
   {
    TP_UpdateDay();
    TP_Sync();
+   TP_RecountBook();
    TP_ManagePositions();
+
+   //the daily stop looks at closed AND floating P/L, so it is checked on
+   //every tick - not only on a new bar
+   if(TP_DayLocked()) return;
 
    datetime bar = (datetime)SeriesInfoInteger(_Symbol, PERIOD_M5, SERIES_LASTBAR_DATE);
    if(bar == 0) return;

@@ -1,8 +1,9 @@
 ; ==========================================================================
 ;  TwinPulse Scalp - round 1, S2_WideTP
-;  same entry, TP 3.5 ATR - more room per trade
+;  S1 entry, TP widened to 3.5 ATR - do the winners run?
 ;  Fixed 0.01 lot, every position carries a broker stop from the open,
 ;  no grid, no averaging, no lot increase. AllowLive=false.
+;  Daily target: ON  (close all at +50 USD, stop for the day)
 ;  Run:  powershell -File tools\run_batch.ps1 -Preset tester\scalp
 ;        -Expert TwinPulse\TwinPulseScalp -Period M5 -Model 1
 ; ==========================================================================
@@ -13,6 +14,12 @@ InpAllowLive=false
 InpLots=0.01
 InpMaxPositions=3
 InpMinMarginLevel=300.00
+InpMode=0
+InpAdxPeriod=14
+InpScoreStrong=0.60
+InpScoreMild=0.20
+InpReopenTolUSD=0.10
+InpHedgeTarget_ATR=2.00
 InpEntryMode=0
 InpFastEMA=9
 InpSlowEMA=21
