@@ -24,6 +24,12 @@
   and the EA logs its margin facts once per run: `ACCOUNT_MARGIN_MODE`,
   `OrderCalcMargin` for 0.01 lot, `SYMBOL_MARGIN_HEDGED`, and the largest leg
   count that fits at 300% and at 250%.
+* `tools/pack_round.py` - one command turns a whole round into
+  `Desktop\round<N>.zip` plus `round<N>.zip.txt`: it copies everything into a
+  stage, **redacts Login / Name / Server / Password** (the UTF-16 report table
+  cells included), writes UTF-8 copies, and drops only the BACK *reports* if
+  the archive would go past 25 MB. A variant called `S1_Pullback` is never
+  mistaken for a backtest file.
 * `summarize_batch.py`: median USD/day, % of days >= 50, % losing days, worst
   day, a balance curve from the deposit, money per split, average and maximum
   open legs, and a with/without-target table. The verdict now applies the
