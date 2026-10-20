@@ -46,6 +46,7 @@ Can an M5 gold scalper in the London-New York overlap earn **~50 USD/day on a
 | 3 | at least **100 closed trades** |
 | 4 | equity drawdown <= 35% (a 100 USD scalper needs room, but not unlimited) |
 | 5 | beats `S5_Random` by >= **0.20 USD/day**, so the entry is not luck. A `_N` variant is compared with `S5_Random_N`, never with the target-on control |
+| 7 | **both halves non-negative**: the BACK net/day must be > 0 too. Added 2026-10-20 after round 1 measured a **-0.40** correlation between the halves across 22 variants - a forward-only pass on 19 days is noise |
 | 5b | `S10_Adaptive` must also beat `S11_AdaptiveRnd` by >= **0.20 USD/day**, otherwise the market score does not beat a coin toss and the score is removed |
 | 6 | `sum(pos_net)` and the report net differ only by the tester's own end-of-test closes |
 
@@ -63,6 +64,29 @@ nothing until the next server day. `InpDailyTargetUSD=0` disables it. Both
 settings are run for every preset, so the effect of the stop is measured
 instead of assumed.
 
+## Round 2 - the exit, and its own control (written 2026-10-20, before the run)
+
+Round 1 found that the **take profit never fired** in 44 runs: every preset
+carried the 1.2/1.0 trail, so S1 was not the plain TP/SL test it claimed to be.
+Round 2 changes the exit only, and gives every exit its own random twin:
+
+| preset | TP / SL | trail | purpose |
+|---|---|---|---|
+| X1_TP20_SL20 | 2.0 / 2.0 | off | clean 1:1 |
+| X2_TP13_SL20 | 1.3 / 2.0 | off | target at the 5x-spread floor |
+| X3_TP20_SL13 | 2.0 / 1.3 | off | tight stop, ~40% needed |
+| X4_TP15_SL15 | 1.5 / 1.5 | off | 1:1 smaller |
+| X5_TP30_SL15 | 3.0 / 1.5 | off | 2:1, ~34% needed |
+| X1..X5 `_Random` | same | off | **the twin**: same exit, coin entry |
+| X6_Trail | 2.0 / 2.0 | 1.2/1.0 | the round-1 engine, anchor |
+| X7_TP20_NoDayStop | 2.0 / 2.0 | off | is the 10 USD daily lock helping? |
+| S7_AllDay | 2.0 / 2.0 | 1.2/1.0 | round-1 anchor |
+
+**The stopping rule for this direction.** If no exit beats its own random twin
+by >= 0.20 USD/day on **both halves**, the M5 scalper family is finished: we
+say so plainly instead of tuning a coin, and the next work is either a
+different timeframe or a different market.
+
 ## Stop rules
 
 1. Ten rounds without a variant clearing gates 1-5: **stop and say so**.
@@ -77,6 +101,14 @@ instead of assumed.
 
 Empty at the start of round 1. Every later change gets its own dated entry,
 written before the round it affects.
+
+### 2026-10-20 - gate 7 added after round 1
+Round 1: 22 variants, cross-half correlation **-0.40**, random control beat the
+strategies on the back half (+4.24 vs -4.55 USD/day). A forward-only gate on 19
+days cannot separate an edge from a coin, so **gate 7** now requires the back
+half to be non-negative as well. This makes S7_AllDay's +7.83/-3.23 a fail; it
+was the only variant that passed before. The gate is stricter, never looser,
+and it is written here before round 2 runs.
 
 ### 2026-10-20 - the round-1 extension (BUY/SELL book + daily stop)
 Added before any report was seen: `InpMode` 0-5, the adaptive split
