@@ -836,7 +836,8 @@ bool TP_Open(int dir, double atr, double spread, double tpAtr)
    //--- track yet is the one we have just opened
    TP_Sync();
    int idx = -1;
-   ulong newest = 0;
+   datetime newest = 0;          // datetime, not ulong: comparing the two
+                                 // raised warning 45 (sign mismatch)
    for(int i = 0; i < g_nPos; i++)
      {
       if(g_pos[i].stopDist > 0.0) continue;        // already initialised
@@ -1122,14 +1123,15 @@ int OnInit(void)
       g_log = FileOpen("TwinPulse_scalp.log",
                        FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_COMMON, ',', CP_ACP);
 
-   TP_Log(StringFormat("TPS 1.11 start %s mode=%d entry=%d lots=%.2f maxpos=%d session %d-%d tp=%.2fATR sl=%.2fATR minTP=%.1fxspread dailyTarget=%.0f dailyLoss=%.0f",
+   TP_Log(StringFormat("TPS 1.12 start %s mode=%d entry=%d lots=%.2f maxpos=%d session %d-%d tp=%.2fATR sl=%.2fATR minTP=%.1fxspread dailyTarget=%.0f dailyLoss=%.0f",
                        _Symbol, InpMode, InpEntryMode, InpLots, InpMaxPositions,
                        InpSessionStart, InpSessionEnd, InpTP_ATR, InpSL_ATR, InpMinTPxSpread,
                        InpDailyTargetUSD, InpDailyLossUSD));
 
    //--- the margin facts the owner asked for, printed once per run
    double m1 = 0.0;
-   OrderCalcMargin(ORDER_TYPE_BUY, _Symbol, InpLots, TP_Ask(), m1);
+   if(!OrderCalcMargin(ORDER_TYPE_BUY, _Symbol, InpLots, TP_Ask(), m1))
+      m1 = 0.0;                  // the log then says 0.00 and the caps are 0
    long   mmode = AccountInfoInteger(ACCOUNT_MARGIN_MODE);
    double e = AccountInfoDouble(ACCOUNT_EQUITY);
    double hedgeRate = SymbolInfoDouble(_Symbol, SYMBOL_MARGIN_HEDGED);

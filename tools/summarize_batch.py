@@ -208,6 +208,9 @@ def parse_report(path):
 
 def pick(report, *needles):
     """find a statistics row by fuzzy label -> (values, pcts) padded to 3"""
+    if len(needles) == 1 and isinstance(needles[0], (list, tuple, set)):
+        # tolerate pick(rep, ["a", "b"]) - the list form used by pick_pair
+        needles = tuple(needles[0])
     for label, valuerows in report["rows"].items():
         if all(n in label for n in needles):
             cells = valuerows[0]
@@ -429,6 +432,7 @@ def load_variant(vdir):
         out["split"] = True
         out["report_back"] = parse_report(p_back) if p_back else None
         out["report_fwd"] = parse_report(p_fwd) if p_fwd else None
+        out["report_fwd_path"] = p_fwd
         if c_back:
             out["legs_back"].load(c_back)
         if c_fwd:
@@ -450,6 +454,23 @@ def load_variant(vdir):
     out["report"] = out["report_back"] or EMPTY_REPORT
     out["legs"].load(os.path.join(vdir, "TwinPulse_legs.csv"))
     return out
+
+
+def first_num(report, needles, pct=False):
+    """-> the first non-empty number of a row.
+
+    The tester writes ONE column per run (back and forward are two separate
+    runs), so `rval`'s `use[0]` is the right cell - but MT5 sometimes splits
+    `185.00 (12.3%)` into two cells, and then the percentage sits in cell 1
+    and `use[0]` is empty. Scan instead of trusting the position.
+    """
+    if report is None:
+        return None
+    vals, pcts = pick(report, *needles)
+    for x in (pcts if pct else vals):
+        if x is not None:
+            return x
+    return None
 
 
 def rval(report, needles, pct=False):
@@ -870,6 +891,7 @@ def scalp_summary(ctx):
     entry_ctl = [v for v in VARIANTS_ if "random" in v.lower()]
     count_ctl = [v for v in VARIANTS_ if "rnd" in v.lower()]
     randoms = entry_ctl + count_ctl
+    no_dd = []          # variants whose report had no readable drawdown
 
     def money_rows(rows):
         """the 'open' rows exist only to record how many legs were open; they
@@ -930,13 +952,26 @@ def scalp_summary(ctx):
         dep = None
         dd = None
         if rep:
-            dv, _ = pick(rep, "initial deposit")
-            dep = dv[0]
-            _, ddp = pick_pair(rep, ["equity drawdown maximal"], pct=True)
-            dd = ddp
+            dep = first_num(rep, ("initial deposit",))
+            # one column per run -> the percentage is read directly, never
+            # through pick_pair (which answers "back vs forward" and returns
+            # None for a single-column report)
+            dd = first_num(rep, ("equity drawdown maximal",), pct=True)
             if dd is None:
-                _, ddp2 = pick(rep, ["equity drawdown maximal"])
-                dd = ddp2
+                dd_abs = first_num(rep, ("equity drawdown maximal",), pct=False)
+                if dd_abs is not None and dep:
+                    dd = 100.0 * dd_abs / dep
+            if dd is None:
+                # name the file: a report with no "Equity Drawdown Maximal"
+                # row is a different problem from a parser that cannot read it
+                no_dd.append("%s (%s)" % (v, os.path.basename(
+                    d.get("report_fwd_path") or d.get("report_path") or "report")))
+        stops = sorted([legs._f(r, "stop_dist") for r in rows
+                        if (r.get("stop_dist") or "").strip() != ""])
+        stop_med = None
+        if stops:
+            n = len(stops)
+            stop_med = stops[n // 2] if n % 2 else (stops[n // 2 - 1] + stops[n // 2]) / 2.0
         gross = sum(legs._f(r, "gross") for r in rows)
         spread_paid = None
         if legs.has_spread:
@@ -951,7 +986,7 @@ def scalp_summary(ctx):
             "final": (dep + sum(vals)) if dep is not None else None,
             "day": ds,
             "be_day": (legs, rows),
-            "avg_legs": avg_legs, "max_legs": max_legs,
+            "avg_legs": avg_legs, "max_legs": max_legs, "stop_med": stop_med,
             "endtest": _end_of_test_deals(rdir, v),
         }
 
@@ -994,6 +1029,10 @@ def scalp_summary(ctx):
                     m(ds.get("per_day"), 1), p(s_["wr"]), p(s_["be"]),
                     p(s_["dd"]), m(s_["final"])))
     L.append("")
+    if no_dd:
+        L.append("**No equity drawdown could be read for: %s.** The DD gate is "
+                 "unmeasured for them, not passed." % ", ".join(no_dd))
+        print("WARNING: no drawdown found in the report of: %s" % ", ".join(no_dd))
     L.append("")
     L.append("## Cost and payoff")
     L.append("")
@@ -1009,6 +1048,33 @@ def scalp_summary(ctx):
                  % (v, m(s_["gross"]), m(spd), m(s_["aw"]), m(s_["al"]),
                     m(s_["avg_legs"], 2), "n/a" if s_["max_legs"] is None else str(s_["max_legs"])))
     L.append("")
+    # ---- minimum deposit ---------------------------------------------------
+    risk_pct = ctx.get("risk_pct") or 0.5
+    L.append("## Minimum deposit for the intended risk")
+    L.append("")
+    L.append("0.01 lot of %s is the broker minimum and risks **1 USD per 1.00 of price"
+             % ctx["symbol"])
+    L.append("distance**. At the measured median stop, a 0.01 lot is %.2f%% of"
+             % risk_pct)
+    L.append("equity only when the account is this big:")
+    L.append("")
+    L.append("| variant | median stop distance | risk on a 100 USD account | "
+             "min deposit for %.2f%% |" % risk_pct)
+    L.append("|---|---|---|---|")
+    for v in VARIANTS_:
+        sd = st[v].get("stop_med")
+        if sd:
+            L.append("| %s | %.2f | %.1f%% | %.0f USD |"
+                     % (v, sd, sd, 100.0 * sd / risk_pct))
+        else:
+            L.append("| %s | n/a | n/a | n/a |" % v)
+    L.append("")
+    L.append("This is the honest gap the fixed 0.01 lot creates: the strategy is")
+    L.append("not sized for 100 USD, the broker minimum is. The account survives")
+    L.append("only because the stop is small in price terms, not because the risk")
+    L.append("percentage is right.")
+    L.append("")
+
     L.append("`req%` = the win rate the measured avg win / avg loss would need to break")
     L.append("even. If `win%` < `req%` the variant loses by construction, whatever the")
     L.append("entry does.")
@@ -1228,7 +1294,9 @@ def scalp_summary(ctx):
                 why.append("%d trades < 100" % n)
             if s_["wr"] is None or s_["be"] is None or s_["wr"] <= s_["be"]:
                 why.append("win rate below its break-even rate")
-            if s_["dd"] is not None and s_["dd"] > 35.0:
+            if s_["dd"] is None:
+                why.append("drawdown not measured")
+            elif s_["dd"] > 35.0:
                 why.append("DD %.1f%% > 35%%" % s_["dd"])
             if gap is not None and gap < 0.20:
                 why.append("beats its control by only %+.2f" % gap)
@@ -1528,7 +1596,7 @@ def main():
             "d_from": d_from, "d_to": d_to, "fwd_start": fwd_start,
             "missing": missing, "stale_warning": stale_warning,
             "posnet": posnet, "pair": pair, "rdir": rdir, "symbol": args.symbol,
-            "deposit": args.deposit,
+            "deposit": args.deposit, "risk_pct": args.risk_pct,
         })
 
     if FAMILY != "hedge":
