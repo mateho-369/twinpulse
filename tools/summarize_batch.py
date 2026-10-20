@@ -951,8 +951,9 @@ def scalp_summary(ctx):
         d = data[v]
         legs = d["legs"]
         rows = d["fwd_rows"] if d["fwd_rows"] else d["back_rows"]
-        legs_rows = rows
-        rows = money_rows(rows)
+        legs_rows = rows              # keeps the 'open' rows: they carry the
+                                      # stop distance and the book size
+        rows = money_rows(rows)       # only closed legs count as trades
         vals = [legs.nval(r) for r in rows]
         wins = [x for x in vals if x > 0]
         losses = [x for x in vals if x < 0]

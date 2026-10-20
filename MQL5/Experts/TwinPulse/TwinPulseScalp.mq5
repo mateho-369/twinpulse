@@ -104,6 +104,8 @@ struct ScalpPos
    double   trailDist;
    datetime openTime;
    bool     trailOn;
+   int      nBuyAtOpen;    // the book this leg was opened into - the CSV row
+   int      nSellAtOpen;   // must describe the decision, not the aftermath
   };
 ScalpPos g_pos[MAXPOS];
 int      g_nPos = 0;
@@ -114,8 +116,10 @@ datetime g_closeAllUntil = 0;    // classify deals until this moment as daily_ex
 int      g_nBuy  = 0;            // open legs by side
 int      g_nSell = 0;
 double   g_dayFloating = 0.0;    // floating P/L of our open legs
-string   g_splitTag = "0B0S";    // e.g. 2B1S, written into every CSV row
+string   g_splitTag = "0B0S";    // the book RIGHT NOW, for the log
 int      g_legsAtOpen = 0;
+string   g_rowSplit = "0B0S";    // the book that a CSV row describes
+int      g_rowLegs = 0;
 
 //--- adaptive statistics
 long     g_legSum = 0;           // sum of open-leg counts sampled every tick
@@ -312,8 +316,8 @@ void TP_CsvRow(datetime when, string leg, int side, double lots, double entry,
              DoubleToString(cost, 2),
              DoubleToString(profit, 2),
              DoubleToString(stopDist, 3),
-             g_splitTag,
-             IntegerToString(g_nBuy + g_nSell));
+             g_rowSplit,
+             IntegerToString(g_rowLegs));
    FileFlush(g_csv);
   }
 
@@ -430,6 +434,8 @@ void TP_Sync(void)
       g_pos[k].trailStart = 0.0;
       g_pos[k].trailDist  = 0.0;
       g_pos[k].trailOn    = false;
+      g_pos[k].nBuyAtOpen  = 0;
+      g_pos[k].nSellAtOpen = 0;
       g_nPos++;
      }
   }
@@ -855,7 +861,25 @@ bool TP_Open(int dir, double atr, double spread, double tpAtr)
      }
 
    g_opens++;
-   g_legsAtOpen = g_nBuy + g_nSell + 1;
+
+   //--- the book INCLUDING the leg we have just opened. Counting it here (and
+   //--- not after the close) is what makes "money per split" mean something:
+   //--- a row closed by its stop used to report the book after the leg left it,
+   //--- which was 0B0S for every last-leg trade.
+   int nb = 0, ns = 0;
+   for(int i = 0; i < g_nPos; i++)
+     {
+      if(g_pos[i].side > 0) nb++;
+      else                  ns++;
+     }
+   g_legsAtOpen = nb + ns;
+   g_rowSplit   = StringFormat("%dB%dS", nb, ns);
+   g_rowLegs    = g_legsAtOpen;
+   if(idx >= 0)
+     {
+      g_pos[idx].nBuyAtOpen  = nb;
+      g_pos[idx].nSellAtOpen = ns;
+     }
 
    //an "open" row carries zero money: it exists so the summary can measure how
    //many legs were open at the moment of the decision (average / max legs)
@@ -863,7 +887,7 @@ bool TP_Open(int dir, double atr, double spread, double tpAtr)
              0.0, "open", 0.0, 0.0, 0.0, atr, spread, slDist);
 
    TP_Log(StringFormat("OPEN dir=%d lots=%.2f fill=%.3f sl=%.3f tp=%.3f atr=%.2f spread=%.3f split=%s",
-                       dir, lots, fill, sl, tp, atr, spread, g_splitTag));
+                       dir, lots, fill, sl, tp, atr, spread, g_rowSplit));
    return true;
   }
 
@@ -1054,6 +1078,18 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
       sl       = g_pos[idx].sl;
       trailOn  = g_pos[idx].trailOn;
       leg      = StringFormat("E%d", InpEntryMode);
+      if(g_pos[idx].nBuyAtOpen + g_pos[idx].nSellAtOpen > 0)
+        {
+         g_rowSplit = StringFormat("%dB%dS", g_pos[idx].nBuyAtOpen, g_pos[idx].nSellAtOpen);
+         g_rowLegs  = g_pos[idx].nBuyAtOpen + g_pos[idx].nSellAtOpen;
+        }
+      else
+        {
+         // a leg adopted after a restart has no snapshot; the live book is
+         // the best we can say, and the row is marked by its own count
+         g_rowSplit = StringFormat("%dB%dS", g_nBuy, g_nSell);
+         g_rowLegs  = g_nBuy + g_nSell;
+        }
       TP_RemoveIdx(idx);
      }
 
@@ -1123,7 +1159,7 @@ int OnInit(void)
       g_log = FileOpen("TwinPulse_scalp.log",
                        FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_COMMON, ',', CP_ACP);
 
-   TP_Log(StringFormat("TPS 1.12 start %s mode=%d entry=%d lots=%.2f maxpos=%d session %d-%d tp=%.2fATR sl=%.2fATR minTP=%.1fxspread dailyTarget=%.0f dailyLoss=%.0f",
+   TP_Log(StringFormat("TPS 1.13 start %s mode=%d entry=%d lots=%.2f maxpos=%d session %d-%d tp=%.2fATR sl=%.2fATR minTP=%.1fxspread dailyTarget=%.0f dailyLoss=%.0f",
                        _Symbol, InpMode, InpEntryMode, InpLots, InpMaxPositions,
                        InpSessionStart, InpSessionEnd, InpTP_ATR, InpSL_ATR, InpMinTPxSpread,
                        InpDailyTargetUSD, InpDailyLossUSD));
