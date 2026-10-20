@@ -438,4 +438,4 @@ Visual=0
 Write-Host "[batch] all variants processed."
 #--- --data alone means reports\decision: after a -Preset run that is the
 #--- WRONG batch, so print the reports folder explicitly -----------------
-Write-Host "[batch] now run:  python tools\summarize_batch.py --reports `"$reports`" --from $FromDate --to $ToDate --symbol $Symbol"
+Write-Host ("[batch] now run:  python tools\summarize_batch.py --reports `"{0}`" --from {1} --to {2} --symbol {3} --deposit {4} --contract-size 100 --ref-spread 0.20" -f $reports, $FromDate, $ToDate, $Symbol, $Deposit)
