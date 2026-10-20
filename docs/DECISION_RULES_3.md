@@ -95,11 +95,22 @@ account died first: at 100 USD a 6 USD stop is 6% and a 10 USD daily stop is
 inside 7-9 days. A 7-day sample cannot separate an edge from a coin.
 
 Round 3 therefore changes **the account size and the window, and nothing else**:
-20 presets that each answer a distinct question, the same inputs, the same lot
-of **0.01**, the same stops in price units, over **2025.10.20 .. 2026.10.19** -
-twelve months, split 2/3 back / 1/3 forward. At 1000 USD the daily stop is 1%
-and the daily target 5%, which is a sane risk profile, and the whole year can
-run to the end instead of dying in week two.
+34 presets = 17 variants x {50 USD daily target on, off}, the same inputs, the
+same lot of **0.01**, the same stops in price units, over
+**2025.10.20 .. 2026.10.19** - twelve months, split 2/3 back / 1/3 forward. At
+1000 USD the daily stop is 1% and the daily target 5%, which is a sane risk
+profile, and the whole year can run to the end instead of dying in week two.
+
+The target on/off twin of every variant exists because a daily stop can hide an
+edge as easily as it protects: a pair that differs only in that switch tells us
+which it is doing. The multi-leg modes (S8-S11) run the baseline 2.0 ATR take
+profit instead of the old 3.0 ATR hedge target, so "more legs" is no longer
+confounded with "wider target".
+
+All 34 live in **one file**, `MQL5/Experts/TwinPulse/TwinPulseONE.mq5`, picked
+with the `InpPreset` input - one compile, and the owner can run any of them by
+hand. `docs/ONE_FILE.md` is the runbook; the `.set` files in `tester/scalp3`
+are the same 34 for the batch script.
 
 This is a **measurement**, not a tuning round and not a demo:
 

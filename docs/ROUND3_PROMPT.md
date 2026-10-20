@@ -25,9 +25,9 @@ git log --oneline -1
 ```
 Expect the newest commit on this branch. Then prove the round-3 presets:
 ```
-(Get-ChildItem tester\scalp3\*.set).Count                                   # must be 20
-(Select-String -Path tester\scalp3\*.set -Pattern '^InpMode=' | Measure-Object).Count   # must be 20
-(Select-String -Path tester\scalp3\*.set -Pattern '^InpLots=0.01' | Measure-Object).Count # must be 20
+(Get-ChildItem tester\scalp3\*.set).Count                                   # must be 34
+(Select-String -Path tester\scalp3\*.set -Pattern '^InpMode=' | Measure-Object).Count   # must be 34
+(Select-String -Path tester\scalp3\*.set -Pattern '^InpLots=0.01' | Measure-Object).Count # must be 34
 ```
 If any count is wrong, stop. The lot **must still be 0.01**: this round changes
 the account size only, never the position size.
@@ -35,7 +35,7 @@ the account size only, never the position size.
 **2. Copy the EA into MT5 and compile it.**
 ```
 robocopy "$repo\MQL5\Experts\TwinPulse" "$data\MQL5\Experts\TwinPulse" *.mq5 *.mqh /NFL /NDL /NJH /NJS
-& $metaeditor /compile:"$data\MQL5\Experts\TwinPulse\TwinPulseScalp.mq5" /log:"$env:TEMP\tps_compile.log"
+& $metaeditor /compile:"$data\MQL5\Experts\TwinPulse\TwinPulseONE.mq5" /log:"$env:TEMP\tps_compile.log"
 Get-Content "$env:TEMP\tps_compile.log" -Tail 25
 ```
 (add `-Encoding Unicode` if the log prints garbage.) Must be **0 errors**.
@@ -43,9 +43,9 @@ Print the `.ex5` timestamp.
 
 **3. MT5 must be closed.** Ask me, wait for "closed".
 
-**4. Run the batch - 20 presets, back + forward = 40 tester runs, 12 months, deposit 1000.**
+**4. Run the batch - 34 presets, back + forward = 68 tester runs, 12 months, deposit 1000.**
 ```
-powershell -ExecutionPolicy Bypass -File tools\run_batch.ps1 -Symbol XAUUSDm -FromDate 2025.10.20 -ToDate 2026.10.19 -Deposit 1000 -Preset tester\scalp3 -Expert TwinPulse\TwinPulseScalp -Period M5 -Model 1
+powershell -ExecutionPolicy Bypass -File tools\run_batch.ps1 -Symbol XAUUSDm -FromDate 2025.10.20 -ToDate 2026.10.19 -Deposit 1000 -Preset tester\scalp3 -Expert TwinPulse\TwinPulseONE -Period M5 -Model 1
 ```
 It is resume-safe: finished variants are skipped, so rerunning the same command
 is how you recover. This is the long one (40 runs over 12 months, roughly 20-30 minutes) - report progress as it goes.

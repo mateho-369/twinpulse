@@ -1,13 +1,9 @@
 ; ==========================================================================
-;  TwinPulse Scalp - round 3 (measurement at 1000 USD), X5_TP30_SL15
-;  TP 3.0 / SL 1.5, no trail - 2:1, needs only ~34%
-;  Inputs are IDENTICAL to round 1/2 - only the account size changes, so the
-;  strategy can survive the window and be measured on both halves.
-;  Fixed 0.01 lot, broker stop on every leg, no grid, no averaging,
-;  AllowLive=false.
-;  Daily target: ON  (close all at +50 USD = 5% of 1000, stop for the day)
-;  Run:  powershell -File tools\run_batch.ps1 -Preset tester\scalp3
-;        -Expert TwinPulse\TwinPulseScalp -Period M5 -Model 1 -Deposit 1000
+;  TwinPulseONE survey - X5_TP30_SL15
+;  exit pair 3.0/1.5, trail OFF - 2:1
+;  Daily target: ON  (+50 USD = close all and stop for the day)
+;  Fixed 0.01 lot, broker stop on every leg, no grid, no averaging down,
+;  AllowLive=false. Same 34 variants as the InpPreset enum of TwinPulseONE.mq5.
 ; ==========================================================================
 
 InpMagic=26101710

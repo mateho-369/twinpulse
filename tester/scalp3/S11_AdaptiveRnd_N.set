@@ -1,22 +1,18 @@
 ; ==========================================================================
-;  TwinPulse Scalp - round 3 (measurement at 1000 USD), X7_TP20_NoDayStop
-;  X1 with no daily loss and no daily target - does the 10 USD lock help or hurt?
-;  Inputs are IDENTICAL to round 1/2 - only the account size changes, so the
-;  strategy can survive the window and be measured on both halves.
-;  Fixed 0.01 lot, broker stop on every leg, no grid, no averaging,
-;  AllowLive=false.
-;  Daily target: OFF
-;  Run:  powershell -File tools\run_batch.ps1 -Preset tester\scalp3
-;        -Expert TwinPulse\TwinPulseScalp -Period M5 -Model 1 -Deposit 1000
+;  TwinPulseONE survey - S11_AdaptiveRnd_N
+;  CONTROL: the same splits, drawn at random  [no daily target]
+;  Daily target: OFF (daily loss stop only)
+;  Fixed 0.01 lot, broker stop on every leg, no grid, no averaging down,
+;  AllowLive=false. Same 34 variants as the InpPreset enum of TwinPulseONE.mq5.
 ; ==========================================================================
 
 InpMagic=26101710
 InpComment=TPS
 InpAllowLive=false
 InpLots=0.01
-InpMaxPositions=3
-InpMinMarginLevel=300.00
-InpMode=0
+InpMaxPositions=4
+InpMinMarginLevel=250.00
+InpMode=4
 InpAdxPeriod=14
 InpScoreStrong=0.60
 InpScoreMild=0.20
@@ -37,15 +33,15 @@ InpTP_ATR=2.00
 InpSL_ATR=2.00
 InpMinTPxSpread=5.00
 InpMaxSL_Price=6.00
-InpTrailStart_ATR=0.00
-InpTrail_ATR=0.00
+InpTrailStart_ATR=1.20
+InpTrail_ATR=1.00
 InpSessionStart=13
 InpSessionEnd=17
 InpFridayStop=20
 InpMaxSpread=0.60
 InpUseNews=false
 InpNewsMinutes=15
-InpDailyLossUSD=0.00
+InpDailyLossUSD=10.00
 InpDailyTargetUSD=0.00
 InpWriteCsv=true
 InpVerboseLog=true

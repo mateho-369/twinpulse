@@ -905,6 +905,17 @@ def scalp_summary(ctx):
         tw = base + "_Random" + ("_N" if v.endswith("_N") else "")
         if tw in st:
             return tw
+        # the multi-leg modes are judged against the control that draws the
+        # SAME splits; the single-leg family against the coin-flip entry.
+        # Without this the alphabetical fallback would hand S1_Pullback
+        # S11_AdaptiveRnd - a different experiment with a different TP.
+        suffix = "_N" if v.endswith("_N") else ""
+        prefer = (["S11_AdaptiveRnd" + suffix, "S5_Random" + suffix]
+                  if base.startswith(("S8_", "S9_", "S10_"))
+                  else ["S5_Random" + suffix, "S11_AdaptiveRnd" + suffix])
+        for name in prefer:
+            if name in st and name != v:
+                return name
         for c in entry_ctl:
             if (c.endswith("_N")) == (v.endswith("_N")) and c != v:
                 return c
