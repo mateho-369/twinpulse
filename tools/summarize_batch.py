@@ -57,6 +57,7 @@ FAMILIES = {
     "reversal": "reversal",
     "scalp":    "scalp",
     "scalp2":   "scalp",       # round 2 lives in its own folder; same rulebook
+    "scalp3":   "scalp",       # round 3: the 1000 USD measurement, same rules
 }
 FAMILY_DOC = {
     "hedge":    "docs/DECISION_RULES.md",
@@ -1132,14 +1133,16 @@ def scalp_summary(ctx):
              % risk_pct)
     L.append("equity only when the account is this big:")
     L.append("")
-    L.append("| variant | median stop distance | risk on a 100 USD account | "
-             "min deposit for %.2f%% |" % risk_pct)
+    # the account the batch actually ran on, not a hard-coded 100
+    acct = ctx.get("deposit") or 100.0
+    L.append("| variant | median stop distance | risk on a %.0f USD account | "
+             "min deposit for %.2f%% |" % (acct, risk_pct))
     L.append("|---|---|---|---|")
     for v in VARIANTS_:
         sd = st[v].get("stop_med")
         if sd:
-            L.append("| %s | %.2f | %.1f%% | %.0f USD |"
-                     % (v, sd, sd, 100.0 * sd / risk_pct))
+            L.append("| %s | %.2f | %.2f%% | %.0f USD |"
+                     % (v, sd, 100.0 * sd / acct, 100.0 * sd / risk_pct))
         else:
             L.append("| %s | n/a | n/a | n/a |" % v)
     L.append("")

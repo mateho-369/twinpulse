@@ -1,3 +1,16 @@
+### Added (round 3 - the measurement round)
+* `tester/scalp3/` - the 34 presets of rounds 1 and 2, byte-identical in their
+  inputs, measured on a **1000 USD** account. The lot stays 0.01: the account
+  size is the variable, because at 100 USD the account died in 7-9 days and the
+  back half was never a 52-day sample. `tools/gen_scalp3_presets.py` writes
+  them from the two earlier generators, with the round-2 random seeds
+  reproduced exactly so a twin is comparable across rounds.
+* `docs/ROUND3_PROMPT.md`, and the round-3 section in
+  `docs/DECISION_RULES_3.md`: a measurement round, no gate moved, and the
+  stopping rule written before the data.
+* the minimum-deposit table in a scalp summary now uses the **account the
+  batch actually ran on** instead of a hard-coded 100.
+
 ### Fixed
 * **The scalp summary crashed after the round-1 batch** (`pick(rep, [list])` ->
   `TypeError: 'in <string>' requires string as left operand`). Cause: the
