@@ -1,7 +1,7 @@
 ; ==========================================================================
 ;  TwinPulseONE survey - S6_Trail
 ;  pullback, TP 5.0 ATR, the trail does the exiting
-;  Daily target: ON  (+50 USD = close all and stop for the day)
+;  Day control: target +50 USD | daily loss stop -10 USD
 ;  Fixed 0.01 lot, broker stop on every leg, no grid, no averaging down,
 ;  AllowLive=false. Same 34 variants as the InpPreset enum of TwinPulseONE.mq5.
 ; ==========================================================================

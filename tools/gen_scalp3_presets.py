@@ -20,7 +20,9 @@ What changed against the 34 presets of round 3 (e407018):
 * every variant exists twice - with the 50 USD daily target and without it
   (`_N`) - because the daily stop is the one rule that can hide an edge.
 
-34 presets = 17 variants x {target on, target off}.
+38 presets = 17 variants x {target on, target off} (34), plus the 4 Y
+variants that vary the DAILY LOSS stop instead - the rule that fired on 85.7%
+of days in the 12-month run and had never been switched off.
 """
 
 import os
@@ -98,6 +100,21 @@ VARIANTS = [
       "InpTrailStart_ATR": "0.00", "InpTrail_ATR": "0.00"}),
     ("X6_MaxPos1", "one leg at a time - do the extra legs pay for themselves",
      {"InpMaxPositions": "1"}),
+
+    # --- the daily-loss confound (added after the 12-month read) ---------
+    # The 12-month run hit the 10 USD daily loss stop on 85.7% of days and its
+    # worst day of the whole year was -10.58. A 10 USD day stop against a 6 USD
+    # per-trade stop ends the day after ~two losers, and this EA had a streak
+    # of 20. That rule is in EVERY preset above, so the survey never measured
+    # the strategy without it. These four are the missing cells.
+    ("Y1_LossOff", "no daily loss stop, no target - the strategy alone",
+     {"InpDailyLossUSD": "0.00", "InpDailyTargetUSD": "0.00"}),
+    ("Y2_LossOff_T50", "no daily loss stop, target 50 kept",
+     {"InpDailyLossUSD": "0.00"}),
+    ("Y3_Loss30", "daily loss 30 (5 stops), no target",
+     {"InpDailyLossUSD": "30.00", "InpDailyTargetUSD": "0.00"}),
+    ("Y4_Loss30_T50", "daily loss 30 (5 stops), target 50 kept",
+     {"InpDailyLossUSD": "30.00"}),
 ]
 
 NO_TARGET = {"InpDailyTargetUSD": "0.00"}
@@ -105,7 +122,7 @@ NO_TARGET = {"InpDailyTargetUSD": "0.00"}
 HEADER = """; ==========================================================================
 ;  TwinPulseONE survey - {name}
 ;  {desc}
-;  Daily target: {tgt}
+;  Day control: {tgt}
 ;  Fixed 0.01 lot, broker stop on every leg, no grid, no averaging down,
 ;  AllowLive=false. Same 34 variants as the InpPreset enum of TwinPulseONE.mq5.
 ; ==========================================================================
@@ -116,8 +133,11 @@ HEADER = """; ==================================================================
 def emit(name, desc, values):
     body = "".join("%s=%s\n" % (key, values[key]) for key in ORDER)
     target = values["InpDailyTargetUSD"]
-    tgt = ("OFF (daily loss stop only)" if target == "0.00"
-           else "ON  (+%s USD = close all and stop for the day)" % target.split(".")[0])
+    loss = values["InpDailyLossUSD"]
+    tgt = ("target OFF" if target == "0.00"
+           else "target +%s USD" % target.split(".")[0])
+    tgt += " | " + ("daily loss stop OFF" if loss == "0.00"
+                    else "daily loss stop -%s USD" % loss.split(".")[0])
     with open(os.path.join(OUT, name + ".set"), "w", newline="\r\n") as handle:
         handle.write(HEADER.format(name=name, desc=desc, tgt=tgt))
         handle.write(body)
@@ -136,6 +156,11 @@ def main():
         values.update(overrides)
         emit(name, desc, values)
         count += 1
+
+        # the Y family states its own target and loss settings; a second
+        # _N copy would just repeat a cell of the 2x2
+        if name.startswith("Y"):
+            continue
 
         off = dict(values)
         off.update(NO_TARGET)

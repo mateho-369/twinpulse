@@ -25,9 +25,9 @@ git log --oneline -1
 ```
 Expect the newest commit on this branch. Then prove the round-3 presets:
 ```
-(Get-ChildItem tester\scalp3\*.set).Count                                   # must be 34
-(Select-String -Path tester\scalp3\*.set -Pattern '^InpMode=' | Measure-Object).Count   # must be 34
-(Select-String -Path tester\scalp3\*.set -Pattern '^InpLots=0.01' | Measure-Object).Count # must be 34
+(Get-ChildItem tester\scalp3\*.set).Count                                   # must be 38
+(Select-String -Path tester\scalp3\*.set -Pattern '^InpMode=' | Measure-Object).Count   # must be 38
+(Select-String -Path tester\scalp3\*.set -Pattern '^InpLots=0.01' | Measure-Object).Count # must be 38
 ```
 If any count is wrong, stop. The lot **must still be 0.01**: this round changes
 the account size only, never the position size.
@@ -43,7 +43,7 @@ Print the `.ex5` timestamp.
 
 **3. MT5 must be closed.** Ask me, wait for "closed".
 
-**4. Run the batch - 34 presets, back + forward = 68 tester runs, 12 months, deposit 1000.**
+**4. Run the batch - 38 presets, back + forward = 76 tester runs, 12 months, deposit 1000.**
 ```
 powershell -ExecutionPolicy Bypass -File tools\run_batch.ps1 -Symbol XAUUSDm -FromDate 2025.10.20 -ToDate 2026.10.19 -Deposit 1000 -Preset tester\scalp3 -Expert TwinPulse\TwinPulseONE -Period M5 -Model 1
 ```

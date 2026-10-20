@@ -1,5 +1,5 @@
 //+------------------------------------------------------------------+
-//|  TwinPulseONE.mq5 - ALL 34 tested variants in ONE file
+//|  TwinPulseONE.mq5 - ALL 38 tested variants in ONE file
 //|  XAUUSDm M5 scalper, fixed 0.01 lot, broker SL on every leg,
 //|  AllowLive=false, no grid, no averaging down.
 //|  Pick the variant with the InpPreset input. TP_CUSTOM = the inputs
@@ -125,6 +125,10 @@ enum ENUM_TP_PRESET
    TP_X5_TP30_SL15_N = 32,                   // X5_TP30_SL15_N
    TP_X6_MaxPos1 = 33,                       // X6_MaxPos1
    TP_X6_MaxPos1_N = 34,                     // X6_MaxPos1_N
+   TP_Y1_LossOff = 35,                       // Y1_LossOff
+   TP_Y2_LossOff_T50 = 36,                   // Y2_LossOff_T50
+   TP_Y3_Loss30 = 37,                        // Y3_Loss30
+   TP_Y4_Loss30_T50 = 38,                    // Y4_Loss30_T50
   };
 
 input ENUM_TP_PRESET InpPreset = TP_CUSTOM;   // Preset: a tested variant, or custom
@@ -139,6 +143,7 @@ double   CFG_InpTrailStart_ATR;
 double   CFG_InpTrail_ATR;
 int      CFG_InpSessionStart;
 int      CFG_InpSessionEnd;
+double   CFG_InpDailyLossUSD;
 double   CFG_InpDailyTargetUSD;
 
 string TP_PresetLabel()
@@ -179,6 +184,10 @@ string TP_PresetLabel()
       case TP_X5_TP30_SL15_N: return "X5_TP30_SL15_N";
       case TP_X6_MaxPos1: return "X6_MaxPos1";
       case TP_X6_MaxPos1_N: return "X6_MaxPos1_N";
+      case TP_Y1_LossOff: return "Y1_LossOff";
+      case TP_Y2_LossOff_T50: return "Y2_LossOff_T50";
+      case TP_Y3_Loss30: return "Y3_Loss30";
+      case TP_Y4_Loss30_T50: return "Y4_Loss30_T50";
      }
    return "custom";
   }
@@ -197,6 +206,7 @@ void TP_ApplyPreset()
    CFG_InpTrail_ATR = InpTrail_ATR;
    CFG_InpSessionStart = InpSessionStart;
    CFG_InpSessionEnd = InpSessionEnd;
+   CFG_InpDailyLossUSD = InpDailyLossUSD;
    CFG_InpDailyTargetUSD = InpDailyTargetUSD;
    if(InpPreset == TP_CUSTOM) return;
 
@@ -213,6 +223,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 1.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 50.00;
          break;
       case TP_S1_Pullback_N:
@@ -226,6 +237,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 1.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 0.00;
          break;
       case TP_S2_WideTP:
@@ -239,6 +251,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 1.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 50.00;
          break;
       case TP_S2_WideTP_N:
@@ -252,6 +265,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 1.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 0.00;
          break;
       case TP_S3_MeanRev:
@@ -265,6 +279,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 1.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 50.00;
          break;
       case TP_S3_MeanRev_N:
@@ -278,6 +293,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 1.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 0.00;
          break;
       case TP_S4_Breakout:
@@ -291,6 +307,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 1.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 50.00;
          break;
       case TP_S4_Breakout_N:
@@ -304,6 +321,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 1.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 0.00;
          break;
       case TP_S5_Random:
@@ -317,6 +335,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 1.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 50.00;
          break;
       case TP_S5_Random_N:
@@ -330,6 +349,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 1.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 0.00;
          break;
       case TP_S6_Trail:
@@ -343,6 +363,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 1.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 50.00;
          break;
       case TP_S6_Trail_N:
@@ -356,6 +377,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 1.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 0.00;
          break;
       case TP_S7_Session:
@@ -369,6 +391,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 1.00;
          CFG_InpSessionStart = 1;
          CFG_InpSessionEnd = 20;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 50.00;
          break;
       case TP_S7_Session_N:
@@ -382,6 +405,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 1.00;
          CFG_InpSessionStart = 1;
          CFG_InpSessionEnd = 20;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 0.00;
          break;
       case TP_S8_Hedge4:
@@ -395,6 +419,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 1.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 50.00;
          break;
       case TP_S8_Hedge4_N:
@@ -408,6 +433,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 1.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 0.00;
          break;
       case TP_S9_Hybrid:
@@ -421,6 +447,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 1.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 50.00;
          break;
       case TP_S9_Hybrid_N:
@@ -434,6 +461,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 1.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 0.00;
          break;
       case TP_S10_Adaptive:
@@ -447,6 +475,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 1.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 50.00;
          break;
       case TP_S10_Adaptive_N:
@@ -460,6 +489,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 1.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 0.00;
          break;
       case TP_S11_AdaptiveRnd:
@@ -473,6 +503,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 1.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 50.00;
          break;
       case TP_S11_AdaptiveRnd_N:
@@ -486,6 +517,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 1.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 0.00;
          break;
       case TP_X1_TP20_SL20:
@@ -499,6 +531,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 0.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 50.00;
          break;
       case TP_X1_TP20_SL20_N:
@@ -512,6 +545,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 0.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 0.00;
          break;
       case TP_X2_TP13_SL20:
@@ -525,6 +559,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 0.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 50.00;
          break;
       case TP_X2_TP13_SL20_N:
@@ -538,6 +573,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 0.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 0.00;
          break;
       case TP_X3_TP20_SL13:
@@ -551,6 +587,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 0.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 50.00;
          break;
       case TP_X3_TP20_SL13_N:
@@ -564,6 +601,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 0.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 0.00;
          break;
       case TP_X4_TP15_SL15:
@@ -577,6 +615,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 0.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 50.00;
          break;
       case TP_X4_TP15_SL15_N:
@@ -590,6 +629,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 0.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 0.00;
          break;
       case TP_X5_TP30_SL15:
@@ -603,6 +643,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 0.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 50.00;
          break;
       case TP_X5_TP30_SL15_N:
@@ -616,6 +657,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 0.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 0.00;
          break;
       case TP_X6_MaxPos1:
@@ -629,6 +671,7 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 1.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 50.00;
          break;
       case TP_X6_MaxPos1_N:
@@ -642,12 +685,69 @@ void TP_ApplyPreset()
          CFG_InpTrail_ATR = 1.00;
          CFG_InpSessionStart = 13;
          CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 10.00;
          CFG_InpDailyTargetUSD = 0.00;
+         break;
+      case TP_Y1_LossOff:
+         CFG_InpMaxPositions = 3;
+         CFG_InpMinMarginLevel = 300.00;
+         CFG_InpMode = 0;
+         CFG_InpEntryMode = 0;
+         CFG_InpTP_ATR = 2.00;
+         CFG_InpSL_ATR = 2.00;
+         CFG_InpTrailStart_ATR = 1.20;
+         CFG_InpTrail_ATR = 1.00;
+         CFG_InpSessionStart = 13;
+         CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 0.00;
+         CFG_InpDailyTargetUSD = 0.00;
+         break;
+      case TP_Y2_LossOff_T50:
+         CFG_InpMaxPositions = 3;
+         CFG_InpMinMarginLevel = 300.00;
+         CFG_InpMode = 0;
+         CFG_InpEntryMode = 0;
+         CFG_InpTP_ATR = 2.00;
+         CFG_InpSL_ATR = 2.00;
+         CFG_InpTrailStart_ATR = 1.20;
+         CFG_InpTrail_ATR = 1.00;
+         CFG_InpSessionStart = 13;
+         CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 0.00;
+         CFG_InpDailyTargetUSD = 50.00;
+         break;
+      case TP_Y3_Loss30:
+         CFG_InpMaxPositions = 3;
+         CFG_InpMinMarginLevel = 300.00;
+         CFG_InpMode = 0;
+         CFG_InpEntryMode = 0;
+         CFG_InpTP_ATR = 2.00;
+         CFG_InpSL_ATR = 2.00;
+         CFG_InpTrailStart_ATR = 1.20;
+         CFG_InpTrail_ATR = 1.00;
+         CFG_InpSessionStart = 13;
+         CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 30.00;
+         CFG_InpDailyTargetUSD = 0.00;
+         break;
+      case TP_Y4_Loss30_T50:
+         CFG_InpMaxPositions = 3;
+         CFG_InpMinMarginLevel = 300.00;
+         CFG_InpMode = 0;
+         CFG_InpEntryMode = 0;
+         CFG_InpTP_ATR = 2.00;
+         CFG_InpSL_ATR = 2.00;
+         CFG_InpTrailStart_ATR = 1.20;
+         CFG_InpTrail_ATR = 1.00;
+         CFG_InpSessionStart = 13;
+         CFG_InpSessionEnd = 17;
+         CFG_InpDailyLossUSD = 30.00;
+         CFG_InpDailyTargetUSD = 50.00;
          break;
      }
 
    PrintFormat("TwinPulseONE preset %s applied (%d of %d inputs overridden)",
-               TP_PresetLabel(), 11, 39);
+               TP_PresetLabel(), 12, 39);
   }
 //+------------------------------------------------------------------+
 
@@ -1290,7 +1390,7 @@ bool TP_DayLocked(void)
 
    double total = TP_DayTotal();
 
-   if(InpDailyLossUSD > 0.0 && total <= -InpDailyLossUSD)
+   if(CFG_InpDailyLossUSD > 0.0 && total <= -CFG_InpDailyLossUSD)
      {
       g_dayLocked = true;
       TP_CloseAll("DAILY LOSS STOP - closing all");
@@ -1748,7 +1848,7 @@ int OnInit(void)
    TP_Log(StringFormat("TPS 1.13 ONE start %s preset=%s mode=%d entry=%d lots=%.2f maxpos=%d session %d-%d tp=%.2fATR sl=%.2fATR minTP=%.1fxspread dailyTarget=%.0f dailyLoss=%.0f",
                        _Symbol, TP_PresetLabel(), CFG_InpMode, CFG_InpEntryMode, InpLots, CFG_InpMaxPositions,
                        CFG_InpSessionStart, CFG_InpSessionEnd, CFG_InpTP_ATR, CFG_InpSL_ATR, InpMinTPxSpread,
-                       CFG_InpDailyTargetUSD, InpDailyLossUSD));
+                       CFG_InpDailyTargetUSD, CFG_InpDailyLossUSD));
 
    //--- the margin facts the owner asked for, printed once per run
    double m1 = 0.0;

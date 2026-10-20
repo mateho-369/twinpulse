@@ -3,7 +3,7 @@
 `MQL5/Experts/TwinPulse/TwinPulseONE.mq5`
 
 * compile **1 file**, nothing else
-* **34 variants** inside it, chosen with one input, `InpPreset`
+* **38 variants** inside it, chosen with one input, `InpPreset`
 * `InpPreset = custom` (the default) = the EA exactly as the inputs say, so
   every old `.set` file still loads and still means the same thing
 * fixed 0.01 lot, broker stop on every leg, no grid, no averaging down,
@@ -18,7 +18,7 @@ Generated, not hand-written: `python3 tools/build_one_file.py` reads
 `TwinPulseScalp.mq5` + `tester/scalp3/*.set`. Edit those, rerun the tool,
 never edit `TwinPulseONE.mq5` (the next build overwrites it).
 
-## The 34 presets
+## The 38 presets
 
 17 variants, each with the 50 USD daily target **on** and **off** (`_N`).
 Every round has to answer "does the daily stop help or hide?" so the pair is
@@ -43,6 +43,23 @@ always available.
 | `X4_TP15_SL15` | 1.5 / 1.5 |
 | `X5_TP30_SL15` | 3.0 / 1.5 |
 | `X6_MaxPos1` | one leg at a time - do the extra legs pay for themselves? |
+
+Then four more that vary the **daily loss stop** instead of the target. This is
+the biggest hole in every earlier round: the 10 USD loss stop was in **all 34**
+presets, it fired on **85.7% of days** in the 12-month run, and the worst day of
+the entire year was -10.58. Against a 6 USD per-trade stop, 10 USD ends the day
+after about two losers - and this EA once had 20 in a row. The strategy has
+never actually been measured without that rule.
+
+| preset | day control |
+|---|---|
+| `Y1_LossOff` | **no day controls at all** - the strategy alone |
+| `Y2_LossOff_T50` | no loss stop, 50 USD target kept |
+| `Y3_Loss30` | loss stop 30 (5 stops), no target |
+| `Y4_Loss30_T50` | loss stop 30, 50 USD target kept |
+
+`S1_Pullback` (loss 10 / target 50) and `S1_Pullback_N` (loss 10 / no target)
+are the reference cells of the same 2x2.
 
 ## Run it by hand - 5 steps
 
@@ -70,9 +87,13 @@ always available.
 5. Each run writes its own CSV in the common folder:
    `TwinPulse_legs_<preset>.csv` - nothing is overwritten between variants.
 
-**Minimum:** `S1_Pullback`, `S5_Random`, `S2_WideTP`, `X1_TP20_SL20`,
-`S10_Adaptive`, `S11_AdaptiveRnd` - six runs. That is enough to answer
-"better than a coin?" for the two families. All 34 is the full survey.
+**Next 4 runs, in this order** - they answer the one open question:
+`S1_Pullback` (reference), then `Y1_LossOff`, `Y3_Loss30`, `Y2_LossOff_T50`.
+Same symbol, same dates, same 10 000 deposit. If a Y variant is still negative
+with the day stop out of the way, there is no edge left to find in these exits.
+
+Then the control set: `S5_Random`, `S11_AdaptiveRnd`, `X1_TP20_SL20`,
+`S10_Adaptive`. All 38 is the full survey.
 
 ## If the tester is too slow
 

@@ -1,0 +1,47 @@
+; ==========================================================================
+;  TwinPulseONE survey - Y1_LossOff
+;  no daily loss stop, no target - the strategy alone
+;  Day control: target OFF | daily loss stop OFF
+;  Fixed 0.01 lot, broker stop on every leg, no grid, no averaging down,
+;  AllowLive=false. Same 34 variants as the InpPreset enum of TwinPulseONE.mq5.
+; ==========================================================================
+
+InpMagic=26101710
+InpComment=TPS
+InpAllowLive=false
+InpLots=0.01
+InpMaxPositions=3
+InpMinMarginLevel=300.00
+InpMode=0
+InpAdxPeriod=14
+InpScoreStrong=0.60
+InpScoreMild=0.20
+InpReopenTolUSD=0.10
+InpHedgeTarget_ATR=2.00
+InpEntryMode=0
+InpFastEMA=9
+InpSlowEMA=21
+InpATRPeriod=14
+InpBBPeriod=20
+InpBBDev=2.00
+InpRSIPeriod=14
+InpRSIBuy=30.00
+InpRSISell=70.00
+InpBreakBars=20
+InpRandomSeed=11
+InpTP_ATR=2.00
+InpSL_ATR=2.00
+InpMinTPxSpread=5.00
+InpMaxSL_Price=6.00
+InpTrailStart_ATR=1.20
+InpTrail_ATR=1.00
+InpSessionStart=13
+InpSessionEnd=17
+InpFridayStop=20
+InpMaxSpread=0.60
+InpUseNews=false
+InpNewsMinutes=15
+InpDailyLossUSD=0.00
+InpDailyTargetUSD=0.00
+InpWriteCsv=true
+InpVerboseLog=true
