@@ -1,3 +1,27 @@
+### Added
+
+* **Round 4 - the scalper.** `MQL5/Experts/TwinPulse/TwinPulseScalp.mq5`:
+  M5 gold scalper for the London-New York overlap, fixed 0.01 lot, at most 3
+  simultaneous positions (margin level >= 300% on a 100 USD account), a broker
+  stop loss on every position from the open, and a **take profit that is
+  refused below 5x spread** - under that the broker owns the trade.
+  Three entry families plus a random control and a session control.
+* `tester/scalp/S1..S7.set` - pullback, wide TP, mean reversion, breakout,
+  **S5_Random** (identical exits, no signal) and **S7_AllDay** (same entry
+  outside the overlap, so the session claim is measured, not assumed).
+* `docs/DECISION_RULES_3.md` - the round-4 gates, frozen before the first
+  report: win rate must beat the break-even rate implied by its own payoff,
+  and the variant must beat the random control by 0.20 USD/day.
+* `docs/SCALP_MATH.md` - 50 USD/day at 0.01 lot is 50 price units of net
+  capture, which is **286% of the median daily range** measured on our own 48
+  days. Also the break-even table: a 1.0 price target needs a 63% win rate
+  just to break even at a 0.26 spread.
+* `summarize_batch.py` learned the **scalp** family: net/day average, best and
+  worst day, trades/day, win rate against the break-even rate, avg win /
+  avg loss, gross before spread, spread paid per day, drawdown, final balance,
+  money by exit reason and by hour, the random-control gap, and a count of the
+  deals the tester closed itself at the end of the run.
+
 # Changelog
 
 All notable changes of the TwinPulse Hedge EA.

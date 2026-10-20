@@ -1,0 +1,42 @@
+; ==========================================================================
+;  TwinPulse Scalp - round 1, S1_Pullback
+;  EMAs 9/21 pullback, TP 2.0 ATR, SL 2.0 ATR, overlap session
+;  Fixed 0.01 lot, every position carries a broker stop from the open,
+;  no grid, no averaging, no lot increase. AllowLive=false.
+;  Run:  powershell -File tools\run_batch.ps1 -Preset tester\scalp
+;        -Expert TwinPulse\TwinPulseScalp -Period M5 -Model 1
+; ==========================================================================
+
+InpMagic=26101710
+InpComment=TPS
+InpAllowLive=false
+InpLots=0.01
+InpMaxPositions=3
+InpMinMarginLevel=300.00
+InpEntryMode=0
+InpFastEMA=9
+InpSlowEMA=21
+InpATRPeriod=14
+InpBBPeriod=20
+InpBBDev=2.00
+InpRSIPeriod=14
+InpRSIBuy=30.00
+InpRSISell=70.00
+InpBreakBars=20
+InpRandomSeed=11
+InpTP_ATR=2.00
+InpSL_ATR=2.00
+InpMinTPxSpread=5.00
+InpMaxSL_Price=6.00
+InpTrailStart_ATR=1.20
+InpTrail_ATR=1.00
+InpSessionStart=13
+InpSessionEnd=17
+InpFridayStop=20
+InpMaxSpread=0.60
+InpUseNews=false
+InpNewsMinutes=15
+InpDailyLossUSD=10.00
+InpDailyTargetUSD=50.00
+InpWriteCsv=true
+InpVerboseLog=true

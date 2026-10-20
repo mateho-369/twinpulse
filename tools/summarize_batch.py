@@ -55,11 +55,13 @@ FAMILIES = {
     "upgrade":  "hedge",
     "trend":    "trend",
     "reversal": "reversal",
+    "scalp":    "scalp",
 }
 FAMILY_DOC = {
     "hedge":    "docs/DECISION_RULES.md",
     "trend":    "docs/DECISION_RULES_2.md",
     "reversal": "docs/DECISION_RULES_2.md (reversal section) + docs/REVERSAL_TEST.md",
+    "scalp":    "docs/DECISION_RULES_3.md",
 }
 
 
@@ -815,6 +817,275 @@ def family_summary(ctx):
     return 0
 
 
+
+# ===========================================================================
+#  SCALP family (round 4). Answers exactly the questions the owner asked:
+#  USD per day, trades per day, win rate against break-even, gross before
+#  spread, spread paid per day, drawdown, and the gap to the daily target.
+# ===========================================================================
+SCALP_TARGET_USD_PER_DAY = 50.0
+
+
+def _end_of_test_deals(rdir, variant):
+    """how many deals the tester closed itself at the end of the run.
+
+    OnDeinit does not always run under the tester; MT5 then closes the open
+    positions itself and the comment says so. Those closes are in the report
+    but not in the legs CSV, which is exactly why the money check prints a
+    gap. Counting them here makes the gap explainable instead of mysterious."""
+    for name in ("report_fwd.htm", "report_back.htm", "report.htm"):
+        path = os.path.join(rdir, variant, name)
+        if not os.path.isfile(path):
+            continue
+        text = read_text_file(path).lower()
+        return text.count("end of test")
+    return 0
+
+
+def scalp_summary(ctx):
+    data = ctx["data"]
+    VARIANTS_ = ctx["variants"]
+    ref = ctx["ref"]
+    csize = ctx["csize"]
+    d_from = ctx["d_from"]
+    d_to = ctx["d_to"]
+    fwd_start = ctx["fwd_start"]
+    missing = ctx["missing"]
+    stale_warning = ctx["stale_warning"]
+    posnet = ctx["posnet"]
+    pair = ctx["pair"]
+    rdir = ctx["rdir"]
+    symbol = ctx["symbol"]
+
+    randoms = [v for v in VARIANTS_ if "random" in v.lower() or "rnd" in v.lower()]
+
+    def day_stats(legs, rows, start, end):
+        per = {}
+        for r in rows:
+            t = legs._close(r)
+            if t is None:
+                continue
+            d = t.date()
+            a = per.setdefault(d, [0.0, 0])
+            a[0] += legs.nval(r)
+            a[1] += 1
+        if not per:
+            return None
+        vals = [v[0] for v in per.values()]
+        days = (end.date() - start.date()).days
+        return {
+            "days": len(per), "calendar_days": max(days, 1),
+            "avg": sum(vals) / len(vals),
+            "best": max(vals), "worst": min(vals),
+            "trades": sum(v[1] for v in per.values()),
+            "per_day": float(sum(v[1] for v in per.values())) / len(per),
+            "total": sum(vals),
+        }
+
+    def stats(v):
+        d = data[v]
+        legs = d["legs"]
+        rows = d["fwd_rows"] if d["fwd_rows"] else d["back_rows"]
+        vals = [legs.nval(r) for r in rows]
+        wins = [x for x in vals if x > 0]
+        losses = [x for x in vals if x < 0]
+        aw = (sum(wins) / len(wins)) if wins else None
+        al = (sum(losses) / len(losses)) if losses else None
+        wr = (100.0 * len(wins) / len(vals)) if vals else None
+        be = None
+        if aw and al:
+            be = 100.0 * abs(al) / (aw + abs(al))
+        ds = day_stats(legs, rows, fwd_start, d_to)
+        rep = d["report_fwd"] if d["report_fwd"] else d["report_back"]
+        dep = None
+        dd = None
+        if rep:
+            dv, _ = pick(rep, "initial deposit")
+            dep = dv[0]
+            _, ddp = pick_pair(rep, ["equity drawdown maximal"], pct=True)
+            dd = ddp
+            if dd is None:
+                _, ddp2 = pick(rep, ["equity drawdown maximal"])
+                dd = ddp2
+        gross = sum(legs._f(r, "gross") for r in rows)
+        spread_paid = None
+        if legs.has_spread:
+            spread_paid = sum(legs._f(r, "spread_open") * legs._f(r, "volume") * csize
+                              for r in rows)
+        return {
+            "legs": legs, "rows": rows, "vals": vals,
+            "net": sum(vals), "gross": gross, "spread": spread_paid,
+            "n": len(vals), "wins": len(wins), "wr": wr,
+            "aw": aw, "al": al, "be": be,
+            "dd": dd, "deposit": dep,
+            "final": (dep + sum(vals)) if dep is not None else None,
+            "day": ds,
+            "be_day": (legs, rows),
+            "endtest": _end_of_test_deals(rdir, v),
+        }
+
+    st = {v: stats(v) for v in VARIANTS_}
+
+    def m(x, d=2):
+        return "n/a" if x is None else ("%.*f" % (d, x))
+
+    def p(x):
+        return "n/a" if x is None else ("%.1f%%" % x)
+
+    L = []
+    L.append("# TwinPulse scalp - SUMMARY (round 4)")
+    L.append("")
+    L.append("Rulebook: **%s**. Target: %.0f USD/day on a 100 USD account."
+             % (FAMILY_DOC["scalp"], SCALP_TARGET_USD_PER_DAY))
+    L.append("")
+    if stale_warning:
+        L.append("> **IDENTICAL RESULTS** - %s. MT5 ignored the .set keys; recompile"
+                 % ", ".join(stale_warning))
+        L.append("> and rerun.")
+        L.append("")
+    if missing:
+        L.append("> **BATCH INCOMPLETE** - no data for: %s. No verdict." % ", ".join(missing))
+        L.append("")
+    L.append("## The one table")
+    L.append("")
+    L.append("| variant | net/day avg | best day | worst day | trades/day | win% | req% | "
+             "avg win | avg loss | gross | spread/day | DD | final | end-test |")
+    L.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    for v in VARIANTS_:
+        s_ = st[v]
+        ds = s_["day"] or {}
+        spd = None
+        if s_["spread"] is not None and ds.get("days"):
+            spd = s_["spread"] / ds["days"]
+        L.append("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %d |"
+                 % (v, m(ds.get("avg")), m(ds.get("best")), m(ds.get("worst")),
+                    m(ds.get("per_day"), 1), p(s_["wr"]), p(s_["be"]),
+                    m(s_["aw"]), m(s_["al"]), m(s_["gross"]), m(spd),
+                    p(s_["dd"]), m(s_["final"]), s_["endtest"]))
+    L.append("")
+    L.append("`req%` = the win rate the measured avg win / avg loss would need to break")
+    L.append("even. If `win%` < `req%` the variant loses by construction, whatever the")
+    L.append("entry does.")
+    L.append("")
+
+    # ---- gap to target ----------------------------------------------------
+    L.append("## Gap to the target")
+    L.append("")
+    best = None
+    for v in VARIANTS_:
+        ds = st[v]["day"]
+        if ds and (best is None or ds["avg"] > best[1]):
+            best = (v, ds["avg"])
+    if best:
+        gap = SCALP_TARGET_USD_PER_DAY - best[1]
+        L.append("Best variant **%s**: **%.2f USD/day** average vs the %.0f USD target - "
+                 "**gap %.2f USD/day** (%.0f%% of the target)."
+                 % (best[0], best[1], SCALP_TARGET_USD_PER_DAY, gap,
+                    100.0 * best[1] / SCALP_TARGET_USD_PER_DAY))
+    else:
+        L.append("No daily figure available.")
+    L.append("")
+
+    # ---- random control ---------------------------------------------------
+    L.append("## Control")
+    L.append("")
+    if randoms:
+        for v in randoms:
+            ds = st[v]["day"] or {}
+            L.append("* `%s` (random entry, identical exits): %.2f USD/day, win %s"
+                     % (v, ds.get("avg", 0.0), p(st[v]["wr"])))
+        for v in VARIANTS_:
+            if v in randoms:
+                continue
+            ds = st[v]["day"] or {}
+            rnd = st[randoms[0]]["day"] or {}
+            if ds.get("avg") is not None and rnd.get("avg") is not None:
+                L.append("* `%s` minus control: %+.2f USD/day"
+                         % (v, ds["avg"] - rnd["avg"]))
+    else:
+        L.append("No random control in this batch - the entry cannot be judged.")
+    L.append("")
+
+    # ---- exits and hours --------------------------------------------------
+    L.append("## Where the money went")
+    L.append("")
+    L.append("| variant | exit | trades | net |")
+    L.append("|---|---|---|---|")
+    for v in VARIANTS_:
+        agg = {}
+        legs = st[v]["legs"]
+        for r in st[v]["rows"]:
+            k = r.get("reason", "?")
+            a = agg.setdefault(k, [0, 0.0])
+            a[0] += 1
+            a[1] += legs.nval(r)
+        for k in sorted(agg):
+            L.append("| %s | %s | %d | %.2f |" % (v, k, agg[k][0], agg[k][1]))
+    L.append("")
+    L.append("| variant | hour | trades | net |")
+    L.append("|---|---|---|---|")
+    for v in VARIANTS_:
+        agg = {}
+        legs = st[v]["legs"]
+        for r in st[v]["rows"]:
+            t = legs._close(r)
+            if t is None:
+                continue
+            a = agg.setdefault(t.hour, [0, 0.0])
+            a[0] += 1
+            a[1] += legs.nval(r)
+        for h in sorted(agg):
+            L.append("| %s | %02d:00 | %d | %.2f |" % (v, h, agg[h][0], agg[h][1]))
+    L.append("")
+
+    # ---- money check ------------------------------------------------------
+    L.append("## Money check")
+    L.append("")
+    L.append("| variant | sum(pos_net) FWD | report FWD | gap | end-of-test closes |")
+    L.append("|---|---|---|---|---|")
+    for v in VARIANTS_:
+        (sb, rb_, ob), (sf, rf_, of) = posnet[v]
+        gap = None
+        if sf is not None and rf_ is not None:
+            gap = rf_ - sf
+        L.append("| %s | %s | %s | %s | %d |"
+                 % (v, m(sf), m(rf_), m(gap), st[v]["endtest"]))
+    L.append("")
+    L.append("A non-zero gap is expected when the tester closes positions itself at")
+    L.append("the end of the run: those deals are in the report and not in the CSV.")
+    L.append("")
+
+    L.append("## Verdict")
+    L.append("")
+    if missing:
+        L.append("**NO VERDICT** - incomplete batch.")
+    else:
+        passing = []
+        for v in VARIANTS_:
+            s_ = st[v]
+            if v in randoms:
+                continue
+            ds = s_["day"] or {}
+            if (ds.get("avg") or 0) > 0 and s_["wr"] is not None and                s_["be"] is not None and s_["wr"] > s_["be"]:
+                passing.append(v)
+        if passing:
+            L.append("**Positive after cost: %s** - win rate above the break-even win"
+                     % ", ".join(passing))
+            L.append("rate. Still not a demo candidate until the real-tick run agrees.")
+        else:
+            L.append("**No variant is positive after cost.** Every one has a win rate")
+            L.append("below its own break-even rate, so the exits lose before the entry")
+            L.append("matters. Change the payoff, not the signal.")
+    L.append("")
+
+    with open(os.path.join(rdir, "SUMMARY.md"), "w", encoding="utf-8") as f:
+        f.write("\n".join(L) + "\n")
+    with open(os.path.join(rdir, "SUMMARY_BACK.md"), "w", encoding="utf-8") as f:
+        f.write("\n".join(L[:6]) + "\n(back-only copy)\n")
+    print("wrote %s" % os.path.join(rdir, "SUMMARY.md"))
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="TwinPulse decision batch summary")
     ap.add_argument("--data", help="terminal DATA folder")
@@ -1072,6 +1343,14 @@ def main():
     # ---- a non-hedge family gets its own rulebook and its own report --
     # (the hedge gates below would be a false verdict for a trend EA: it
     # asks "does the signal beat a random control", not "does the bank work")
+    if FAMILY == "scalp":
+        return scalp_summary({
+            "data": data, "variants": VARIANTS, "ref": ref, "csize": csize,
+            "d_from": d_from, "d_to": d_to, "fwd_start": fwd_start,
+            "missing": missing, "stale_warning": stale_warning,
+            "posnet": posnet, "pair": pair, "rdir": rdir, "symbol": args.symbol,
+        })
+
     if FAMILY != "hedge":
         return family_summary({
             "data": data, "variants": VARIANTS, "ref": ref, "csize": csize,
