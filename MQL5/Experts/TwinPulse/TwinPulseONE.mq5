@@ -48,9 +48,16 @@
 //     trail winners, hold the loser until it is back near break-even, then
 //     cap it, trail it, add 2 to it; repeat. No trade cap, 30 USD day loss.
 //     Presets P1_Pulse and its control P2_PulseRnd (adds to a random side).
+//  1.18 (P1 logic untouched; P1/P2 behave exactly as in 1.17 - saved as
+//  branch claude/pulse-1.17-P1-baseline):
+//   * InpPulseMaxSpread: start a cycle only when the spread is cheap
+//   * InpPulseVirtual: enter on the side that moves first instead of
+//     paying for a 1B+1S probe (one spread saved, no held loser)
+//   * presets P3/P4 (spread gate 0.20) and P5/P6 (virtual + gate), each
+//     with its random control
 //+------------------------------------------------------------------+
 #property copyright "TwinPulse"
-#property version   "1.17"
+#property version   "1.18"
 
 #include <Trade\Trade.mqh>
 
@@ -75,6 +82,8 @@ input double InpPulseTrailDist  = 0.70;      // Pulse: trail distance, price
 input double InpPulseSL         = 5.00;      // Pulse: hard broker stop on EVERY leg, price (big-loss cap)
 input double InpPulseBETol      = 0.30;      // Pulse: held loser counts as "back" at >= -this USD
 input bool   InpPulseRandom     = false;     // Pulse CONTROL: add to a random side, not the winner
+input double InpPulseMaxSpread  = 0.0;       // Pulse: start a cycle only when spread <= this (0 = off)
+input bool   InpPulseVirtual    = false;     // Pulse: VIRTUAL probe - no 1B+1S, enter on the side that moves first
 input int    InpAdxPeriod       = 14;        // ADX period (market score)
 input double InpScoreStrong     = 0.60;      // |score| >= this -> 3 on one side, 0 on the other
 input double InpScoreMild       = 0.20;      // |score| >= this -> 2/1 split
@@ -181,6 +190,10 @@ enum ENUM_TP_PRESET
    TP_Q4_M1_TP3SL15_Rnd = 45,                // Q4 = Q3 with RANDOM entry (control)
    TP_P1_Pulse = 46,                         // P1 owner's pulse cycle on M1, no trade limit, day loss 30
    TP_P2_PulseRnd = 47,                      // P2 = P1 but adds to a RANDOM side (control)
+   TP_P3_PulseSpr = 48,                      // P3 = P1 + new cycle only when spread <= 0.20
+   TP_P4_PulseSprRnd = 49,                   // P4 = P3 random control
+   TP_P5_PulseVirt = 50,                     // P5 = virtual probe (1 spread saved) + spread <= 0.20
+   TP_P6_PulseVirtRnd = 51,                  // P6 = P5 random control
   };
 
 input ENUM_TP_PRESET InpPreset = TP_CUSTOM;   // Preset: a tested variant, or custom
@@ -202,6 +215,8 @@ double   CFG_InpSL_Price;
 int      CFG_InpMaxTradesDay;
 ENUM_TIMEFRAMES g_tf = PERIOD_M5;   // the signal timeframe, set in TP_ApplyPreset
 bool     CFG_InpPulseRandom;
+double   CFG_InpPulseMaxSpread;
+bool     CFG_InpPulseVirtual;
 bool     CFG_InpHTFFilter;
 
 string TP_PresetLabel()
@@ -255,6 +270,10 @@ string TP_PresetLabel()
       case TP_Q4_M1_TP3SL15_Rnd: return "Q4_M1_TP3SL15_Rnd";
       case TP_P1_Pulse: return "P1_Pulse";
       case TP_P2_PulseRnd: return "P2_PulseRnd";
+      case TP_P3_PulseSpr: return "P3_PulseSpr";
+      case TP_P4_PulseSprRnd: return "P4_PulseSprRnd";
+      case TP_P5_PulseVirt: return "P5_PulseVirt";
+      case TP_P6_PulseVirtRnd: return "P6_PulseVirtRnd";
      }
    return "custom";
   }
@@ -281,8 +300,12 @@ void TP_ApplyPreset()
    CFG_InpMaxTradesDay = InpMaxTradesDay;
    g_tf = InpSignalTF;
    CFG_InpPulseRandom = InpPulseRandom;
+   CFG_InpPulseMaxSpread = InpPulseMaxSpread;
+   CFG_InpPulseVirtual = InpPulseVirtual;
    if(InpPreset == TP_CUSTOM) return;
    CFG_InpPulseRandom = false;
+   CFG_InpPulseMaxSpread = 0.0;
+   CFG_InpPulseVirtual = false;
    CFG_InpHTFFilter = false;   // only the Z presets switch it on
    CFG_InpTP_Price = 0.0;      // only the Q presets use fixed distances,
    CFG_InpSL_Price = 0.0;      // a daily trade cap and the M1 timeframe
@@ -874,6 +897,10 @@ void TP_ApplyPreset()
       //--- has a 5 USD broker stop; trail/trigger/add use the Pulse inputs.
       case TP_P1_Pulse:
       case TP_P2_PulseRnd:
+      case TP_P3_PulseSpr:
+      case TP_P4_PulseSprRnd:
+      case TP_P5_PulseVirt:
+      case TP_P6_PulseVirtRnd:
          CFG_InpMaxPositions = 4;
          CFG_InpMinMarginLevel = 300.00;
          CFG_InpMode = 6;
@@ -888,11 +915,15 @@ void TP_ApplyPreset()
          CFG_InpDailyTargetUSD = 0.00;
          CFG_InpMaxTradesDay = 0;
          g_tf = PERIOD_M1;
-         CFG_InpPulseRandom = (InpPreset == TP_P2_PulseRnd);
+         CFG_InpPulseRandom = (InpPreset == TP_P2_PulseRnd || InpPreset == TP_P4_PulseSprRnd ||
+                               InpPreset == TP_P6_PulseVirtRnd);
+         //P3..P6: the P1 logic untouched, only the cost of a cycle changes
+         if(InpPreset >= TP_P3_PulseSpr) CFG_InpPulseMaxSpread = 0.20;
+         CFG_InpPulseVirtual = (InpPreset == TP_P5_PulseVirt || InpPreset == TP_P6_PulseVirtRnd);
          break;
      }
 
-   PrintFormat("TwinPulseONE preset %s applied (18 config values overridden)",
+   PrintFormat("TwinPulseONE preset %s applied (20 config values overridden)",
                TP_PresetLabel());
   }
 //+------------------------------------------------------------------+
@@ -1800,11 +1831,13 @@ bool TP_Open(int dir, double atr, double spread, double tpAtr)
 #define PULSE_PROBE   1
 #define PULSE_RIDE    2
 #define PULSE_RECOVER 3
+#define PULSE_VPROBE  4   // virtual probe: watching price, nothing open yet
 
 int      g_pulseState = PULSE_IDLE;
 int      g_pulseWin   = 0;        // +1 / -1 while riding
 double   g_pulseAtr   = 0.0;      // last ATR, for the CSV only
 int      g_pulseCycles = 0;
+double   g_pulseRef    = 0.0;      // virtual probe: mid price at arming
 
 int TP_SideCount(int side)
   {
@@ -1899,6 +1932,26 @@ void TP_PulseAdd(int side)
       if(TP_PulseOpenLeg(side, true) < 0) break;
   }
 
+//--- VIRTUAL probe: instead of paying for 1 BUY + 1 SELL, remember the mid
+//--- price; the side the market moves to first (by the same trigger as the
+//--- real probe) gets 1 + InpPulseAdd legs. Saves the losing probe leg and
+//--- its spread; there is no held loser, so no recovery phase.
+void TP_PulseVirtualArm(void)
+  {
+   g_pulseRef = (TP_Ask() + TP_Bid()) * 0.5;
+   if(g_pulseState != PULSE_VPROBE) g_pulseCycles++;
+   g_pulseState = PULSE_VPROBE;
+  }
+
+double TP_UsdToPrice(double usd)
+  {
+   double tickSize  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double lots      = TP_NormLots(InpLots);
+   if(tickSize <= 0.0 || tickValue <= 0.0 || lots <= 0.0) return usd;
+   return usd / (tickValue * lots) * tickSize;
+  }
+
 void TP_PulseProbe(void)
   {
    g_pulseCycles++;
@@ -1939,9 +1992,32 @@ void TP_PulseTick(void)
    int nb = TP_SideCount(1);
    int ns = TP_SideCount(-1);
 
+   //--- virtual probe armed: enter on the side that moves first
+   if(g_pulseState == PULSE_VPROBE && nb + ns == 0)
+     {
+      if(g_pulseRef <= 0.0) return;
+      if(!TP_SessionWindow() || !TP_MarketOpen()) { g_pulseState = PULSE_IDLE; return; }
+      if(CFG_InpPulseMaxSpread > 0.0 && TP_Spread() > CFG_InpPulseMaxSpread) return;
+      double mid  = (TP_Ask() + TP_Bid()) * 0.5;
+      double trig = TP_UsdToPrice(InpPulseTrigUSD);
+      int win = 0;
+      if(mid - g_pulseRef >= trig)      win = 1;
+      else if(g_pulseRef - mid >= trig) win = -1;
+      if(win == 0) return;
+      if(CFG_InpPulseRandom)
+         win = ((int)(MathRand() % 100) < 50) ? 1 : -1;   // CONTROL
+      g_pulseWin = win;
+      g_pulseState = PULSE_RIDE;
+      if(TP_PulseOpenLeg(win, true) >= 0) TP_PulseAdd(win);
+      TP_Log(StringFormat("PULSE virtual winner=%d move=%.2f%s", win, mid - g_pulseRef,
+                          CFG_InpPulseRandom ? " RANDOM" : ""));
+      return;
+     }
+
    //--- flat: whatever happened, the next cycle starts on a new bar
    if(nb + ns == 0)
      {
+      if(g_pulseState == PULSE_VPROBE) return;           // still watching
       if(g_pulseState != PULSE_IDLE)
          TP_Log(StringFormat("PULSE cycle %d done, day net %.2f", g_pulseCycles, g_dayNet));
       g_pulseState = PULSE_IDLE;
@@ -2094,8 +2170,19 @@ void TP_OnNewBar(void)
    if(CFG_InpMode == 6)
      {
       g_pulseAtr = atr;
-      if(g_pulseState == PULSE_IDLE && g_nPos == 0)
-         TP_PulseProbe();
+      //cost gate: a cycle pays ~5 spreads, so start one only when it is cheap
+      if(CFG_InpPulseMaxSpread > 0.0 && spread > CFG_InpPulseMaxSpread)
+        {
+         if(g_pulseState == PULSE_VPROBE) g_pulseState = PULSE_IDLE;   // drop a stale reference
+         return;
+        }
+      //like the real probe, a virtual probe waits until one side moves by the
+      //trigger - its reference is set once, not reset every bar
+      if(g_nPos == 0 && g_pulseState == PULSE_IDLE)
+        {
+         if(CFG_InpPulseVirtual) TP_PulseVirtualArm();
+         else                    TP_PulseProbe();
+        }
       return;
      }
 
@@ -2366,7 +2453,7 @@ int OnInit(void)
       g_log = FileOpen("TwinPulse_scalp.log",
                        FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_COMMON, ',', CP_ACP);
 
-   TP_Log(StringFormat("TPS 1.17 ONE start %s tf=%s preset=%s htf=%d mode=%d entry=%d lots=%.2f maxpos=%d session %d-%d tp=%.2fATR sl=%.2fATR minTP=%.1fxspread dailyTarget=%.0f dailyLoss=%.0f",
+   TP_Log(StringFormat("TPS 1.18 ONE start %s tf=%s preset=%s htf=%d mode=%d entry=%d lots=%.2f maxpos=%d session %d-%d tp=%.2fATR sl=%.2fATR minTP=%.1fxspread dailyTarget=%.0f dailyLoss=%.0f",
                        _Symbol, EnumToString(g_tf), TP_PresetLabel(), (int)CFG_InpHTFFilter, CFG_InpMode, CFG_InpEntryMode, InpLots, CFG_InpMaxPositions,
                        CFG_InpSessionStart, CFG_InpSessionEnd, CFG_InpTP_ATR, CFG_InpSL_ATR, InpMinTPxSpread,
                        CFG_InpDailyTargetUSD, CFG_InpDailyLossUSD));
