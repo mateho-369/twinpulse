@@ -39,9 +39,13 @@
 //     cache. 1.13/1.14 wrote "long/stop" for every such row.
 //   * OnTester prints and saves the per-trade mean, 95% CI, win rate vs
 //     break-even and both halves; "OnTester result" = mean x 100
+//  1.16:
+//   * InpSignalTF (M1/M5), fixed TP/SL in price, max trades per day
+//   * experiment Q: the owner's M1 scalper (~20/day, TP 2-3 USD, SL
+//     1.5-2 USD) with random twins Q2/Q4. All older presets stay on M5.
 //+------------------------------------------------------------------+
 #property copyright "TwinPulse"
-#property version   "1.15"
+#property version   "1.16"
 
 #include <Trade\Trade.mqh>
 
@@ -84,6 +88,10 @@ input int    InpHTFPeriod       = 50;        // H1 EMA period for the trend filt
 input double InpTP_ATR          = 2.00;      // Take profit, x ATR
 input double InpSL_ATR          = 2.00;      // Stop loss, x ATR
 input double InpMinTPxSpread    = 5.0;       // TP must be at least this many spreads
+input double InpTP_Price        = 0.0;       // Fixed TP distance in price (0 = use ATR). XAUUSDm 0.01 lot: 1.00 = 1 USD
+input double InpSL_Price        = 0.0;       // Fixed SL distance in price (0 = use ATR)
+input int    InpMaxTradesDay    = 0;         // Max new trades per day (0 = no limit)
+input ENUM_TIMEFRAMES InpSignalTF = PERIOD_M5; // Signal timeframe (M5 = all tested presets)
 input double InpMaxSL_Price     = 6.00;      // Hard cap of the stop, price units
 input double InpTrailStart_ATR  = 1.20;      // Start trailing at +x ATR (0 = off)
 input double InpTrail_ATR       = 1.00;      // Trail distance, x ATR
@@ -153,6 +161,10 @@ enum ENUM_TP_PRESET
    TP_Z1_PullHTF = 39,                       // Z1_PullHTF (pullback + H1 trend, no day stops)
    TP_Z2_RndHTF = 40,                        // Z2_RndHTF (random + H1 trend: the filter's own control)
    TP_Z3_Rnd = 41,                           // Z3_Rnd (random, no filter, no day stops: plain control)
+   TP_Q1_M1_TP2SL2 = 42,                     // Q1 M1 scalp: pullback, TP 2 USD, SL 2 USD, max 20/day
+   TP_Q2_M1_TP2SL2_Rnd = 43,                 // Q2 = Q1 with RANDOM entry (control)
+   TP_Q3_M1_TP3SL15 = 44,                    // Q3 M1 scalp: pullback, TP 3 USD, SL 1.5 USD, max 20/day
+   TP_Q4_M1_TP3SL15_Rnd = 45,                // Q4 = Q3 with RANDOM entry (control)
   };
 
 input ENUM_TP_PRESET InpPreset = TP_CUSTOM;   // Preset: a tested variant, or custom
@@ -169,6 +181,10 @@ int      CFG_InpSessionStart;
 int      CFG_InpSessionEnd;
 double   CFG_InpDailyLossUSD;
 double   CFG_InpDailyTargetUSD;
+double   CFG_InpTP_Price;
+double   CFG_InpSL_Price;
+int      CFG_InpMaxTradesDay;
+ENUM_TIMEFRAMES g_tf = PERIOD_M5;   // the signal timeframe, set in TP_ApplyPreset
 bool     CFG_InpHTFFilter;
 
 string TP_PresetLabel()
@@ -216,6 +232,10 @@ string TP_PresetLabel()
       case TP_Z1_PullHTF: return "Z1_PullHTF";
       case TP_Z2_RndHTF: return "Z2_RndHTF";
       case TP_Z3_Rnd: return "Z3_Rnd";
+      case TP_Q1_M1_TP2SL2: return "Q1_M1_TP2SL2";
+      case TP_Q2_M1_TP2SL2_Rnd: return "Q2_M1_TP2SL2_Rnd";
+      case TP_Q3_M1_TP3SL15: return "Q3_M1_TP3SL15";
+      case TP_Q4_M1_TP3SL15_Rnd: return "Q4_M1_TP3SL15_Rnd";
      }
    return "custom";
   }
@@ -237,8 +257,16 @@ void TP_ApplyPreset()
    CFG_InpDailyLossUSD = InpDailyLossUSD;
    CFG_InpDailyTargetUSD = InpDailyTargetUSD;
    CFG_InpHTFFilter = InpHTFFilter;
+   CFG_InpTP_Price = InpTP_Price;
+   CFG_InpSL_Price = InpSL_Price;
+   CFG_InpMaxTradesDay = InpMaxTradesDay;
+   g_tf = InpSignalTF;
    if(InpPreset == TP_CUSTOM) return;
    CFG_InpHTFFilter = false;   // only the Z presets switch it on
+   CFG_InpTP_Price = 0.0;      // only the Q presets use fixed distances,
+   CFG_InpSL_Price = 0.0;      // a daily trade cap and the M1 timeframe
+   CFG_InpMaxTradesDay = 0;
+   g_tf = PERIOD_M5;
 
    switch(InpPreset)
      {
@@ -793,9 +821,36 @@ void TP_ApplyPreset()
          CFG_InpDailyTargetUSD = 0.00;
          CFG_InpHTFFilter = (InpPreset != TP_Z3_Rnd);
          break;
+      //--- experiment Q: the owner's M1 scalper - about 20 trades a day,
+      //--- 1-4 USD per trade, small losses. One position at a time, the
+      //--- London + New York hours, no trailing, no day stops (so the
+      //--- per-trade number is clean). Each has its random twin.
+      case TP_Q1_M1_TP2SL2:
+      case TP_Q2_M1_TP2SL2_Rnd:
+      case TP_Q3_M1_TP3SL15:
+      case TP_Q4_M1_TP3SL15_Rnd:
+         CFG_InpMaxPositions = 1;
+         CFG_InpMinMarginLevel = 300.00;
+         CFG_InpMode = 0;
+         CFG_InpEntryMode = (InpPreset == TP_Q1_M1_TP2SL2 || InpPreset == TP_Q3_M1_TP3SL15) ? 0 : 3;
+         CFG_InpTP_ATR = 2.00;            // unused: fixed distances below
+         CFG_InpSL_ATR = 2.00;
+         CFG_InpTrailStart_ATR = 0.00;    // trailing off
+         CFG_InpTrail_ATR = 1.00;
+         CFG_InpSessionStart = 8;
+         CFG_InpSessionEnd = 20;
+         CFG_InpDailyLossUSD = 0.00;
+         CFG_InpDailyTargetUSD = 0.00;
+         CFG_InpMaxTradesDay = 20;
+         g_tf = PERIOD_M1;
+         if(InpPreset == TP_Q1_M1_TP2SL2 || InpPreset == TP_Q2_M1_TP2SL2_Rnd)
+           { CFG_InpTP_Price = 2.00; CFG_InpSL_Price = 2.00; }
+         else
+           { CFG_InpTP_Price = 3.00; CFG_InpSL_Price = 1.50; }
+         break;
      }
 
-   PrintFormat("TwinPulseONE preset %s applied (13 config values overridden)",
+   PrintFormat("TwinPulseONE preset %s applied (17 config values overridden)",
                TP_PresetLabel());
   }
 //+------------------------------------------------------------------+
@@ -860,6 +915,7 @@ datetime g_dayAnchor    = 0;
 double   g_dayStartEquity = 0.0;
 double   g_dayNet       = 0.0;
 bool     g_dayLocked    = false;
+int      g_dayTrades    = 0;      // new trades opened today
 datetime g_lastCloseTry = 0;      // retry a day stop whose close-all failed
 
 int      g_cycle = 0;
@@ -1455,6 +1511,7 @@ void TP_UpdateDay(void)
    g_dayStartEquity = AccountInfoDouble(ACCOUNT_EQUITY);
    g_dayNet         = 0.0;
    g_dayLocked      = false;
+   g_dayTrades      = 0;
   }
 
 void TP_CloseAll(string why)
@@ -1555,6 +1612,7 @@ bool TP_CanOpen(double &outSLDist)
    outSLDist = 0.0;
 
    if(g_nPos >= CFG_InpMaxPositions) return false;
+   if(CFG_InpMaxTradesDay > 0 && g_dayTrades >= CFG_InpMaxTradesDay) return false;
    if(TP_DayLocked()) return false;
    if(!TP_SessionWindow()) return false;
    if(!TP_MarketOpen()) return false;
@@ -1575,12 +1633,14 @@ bool TP_CanOpen(double &outSLDist)
 bool TP_Open(int dir, double atr, double spread, double tpAtr)
   {
    double slDist = CFG_InpSL_ATR * atr;
+   if(CFG_InpMode == 0 && CFG_InpSL_Price > 0.0) slDist = CFG_InpSL_Price;   // fixed (Q presets)
    if(InpMaxSL_Price > 0.0 && slDist > InpMaxSL_Price) slDist = InpMaxSL_Price;
 
    double minDist = TP_StopsLevel() + TP_Point() * 2.0;
    if(slDist < minDist) slDist = minDist;
 
    double tpDist = tpAtr * atr;
+   if(CFG_InpMode == 0 && CFG_InpTP_Price > 0.0) tpDist = CFG_InpTP_Price;   // fixed (Q presets)
 
    //--- rule 2: a target that does not clear the spread several times over
    //--- is a donation to the broker - refuse it instead of running it
@@ -1648,6 +1708,7 @@ bool TP_Open(int dir, double atr, double spread, double tpAtr)
      }
 
    g_opens++;
+   g_dayTrades++;
 
    //--- the book INCLUDING the leg we have just opened. Counting it here (and
    //--- not after the close) is what makes "money per split" mean something:
@@ -1702,12 +1763,12 @@ int TP_SignalDir(double fast, double slow, double atr, double bbUp, double bbLo,
    else if(CFG_InpEntryMode == 2)
      {
       //range breakout
-      int hi = iHighest(_Symbol, PERIOD_M5, MODE_HIGH, InpBreakBars, 2);
-      int lo = iLowest(_Symbol, PERIOD_M5, MODE_LOW, InpBreakBars, 2);
+      int hi = iHighest(_Symbol, g_tf, MODE_HIGH, InpBreakBars, 2);
+      int lo = iLowest(_Symbol, g_tf, MODE_LOW, InpBreakBars, 2);
       if(hi >= 0 && lo >= 0)
         {
-         double hh = iHigh(_Symbol, PERIOD_M5, hi);
-         double ll = iLow(_Symbol, PERIOD_M5, lo);
+         double hh = iHigh(_Symbol, g_tf, hi);
+         double ll = iLow(_Symbol, g_tf, lo);
          if(close1 > hh) dir = 1;
          if(close1 < ll) dir = -1;
         }
@@ -1737,9 +1798,9 @@ void TP_OnNewBar(void)
    double slDist = 0.0;
    if(!TP_CanOpen(slDist)) return;
 
-   double close1 = iClose(_Symbol, PERIOD_M5, 1);
-   double low1   = iLow(_Symbol, PERIOD_M5, 1);
-   double high1  = iHigh(_Symbol, PERIOD_M5, 1);
+   double close1 = iClose(_Symbol, g_tf, 1);
+   double low1   = iLow(_Symbol, g_tf, 1);
+   double high1  = iHigh(_Symbol, g_tf, 1);
    if(close1 <= 0.0) return;
 
    double spread = TP_Spread();
@@ -1957,12 +2018,12 @@ int OnInit(void)
       return INIT_FAILED;
      }
 
-   hFast = iMA(_Symbol, PERIOD_M5, InpFastEMA, 0, MODE_EMA, PRICE_CLOSE);
-   hSlow = iMA(_Symbol, PERIOD_M5, InpSlowEMA, 0, MODE_EMA, PRICE_CLOSE);
-   hATR  = iATR(_Symbol, PERIOD_M5, InpATRPeriod);
-   hBB   = iBands(_Symbol, PERIOD_M5, InpBBPeriod, 0, InpBBDev, PRICE_CLOSE);
-   hRSI  = iRSI(_Symbol, PERIOD_M5, InpRSIPeriod, PRICE_CLOSE);
-   hADX  = iADX(_Symbol, PERIOD_M5, InpAdxPeriod);
+   hFast = iMA(_Symbol, g_tf, InpFastEMA, 0, MODE_EMA, PRICE_CLOSE);
+   hSlow = iMA(_Symbol, g_tf, InpSlowEMA, 0, MODE_EMA, PRICE_CLOSE);
+   hATR  = iATR(_Symbol, g_tf, InpATRPeriod);
+   hBB   = iBands(_Symbol, g_tf, InpBBPeriod, 0, InpBBDev, PRICE_CLOSE);
+   hRSI  = iRSI(_Symbol, g_tf, InpRSIPeriod, PRICE_CLOSE);
+   hADX  = iADX(_Symbol, g_tf, InpAdxPeriod);
 
    if(hFast == INVALID_HANDLE || hSlow == INVALID_HANDLE || hATR == INVALID_HANDLE ||
       hBB == INVALID_HANDLE || hRSI == INVALID_HANDLE || hADX == INVALID_HANDLE)
@@ -2010,8 +2071,8 @@ int OnInit(void)
       g_log = FileOpen("TwinPulse_scalp.log",
                        FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_COMMON, ',', CP_ACP);
 
-   TP_Log(StringFormat("TPS 1.15 ONE start %s preset=%s htf=%d mode=%d entry=%d lots=%.2f maxpos=%d session %d-%d tp=%.2fATR sl=%.2fATR minTP=%.1fxspread dailyTarget=%.0f dailyLoss=%.0f",
-                       _Symbol, TP_PresetLabel(), (int)CFG_InpHTFFilter, CFG_InpMode, CFG_InpEntryMode, InpLots, CFG_InpMaxPositions,
+   TP_Log(StringFormat("TPS 1.16 ONE start %s tf=%s preset=%s htf=%d mode=%d entry=%d lots=%.2f maxpos=%d session %d-%d tp=%.2fATR sl=%.2fATR minTP=%.1fxspread dailyTarget=%.0f dailyLoss=%.0f",
+                       _Symbol, EnumToString(g_tf), TP_PresetLabel(), (int)CFG_InpHTFFilter, CFG_InpMode, CFG_InpEntryMode, InpLots, CFG_InpMaxPositions,
                        CFG_InpSessionStart, CFG_InpSessionEnd, CFG_InpTP_ATR, CFG_InpSL_ATR, InpMinTPxSpread,
                        CFG_InpDailyTargetUSD, CFG_InpDailyLossUSD));
 
@@ -2053,7 +2114,7 @@ void OnTick(void)
    //every tick - not only on a new bar
    if(TP_DayLocked()) return;
 
-   datetime bar = (datetime)SeriesInfoInteger(_Symbol, PERIOD_M5, SERIES_LASTBAR_DATE);
+   datetime bar = (datetime)SeriesInfoInteger(_Symbol, g_tf, SERIES_LASTBAR_DATE);
    if(bar == 0) return;
    if(bar == g_lastBarM5) return;
    g_lastBarM5 = bar;
