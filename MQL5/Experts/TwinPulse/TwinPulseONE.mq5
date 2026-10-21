@@ -43,9 +43,14 @@
 //   * InpSignalTF (M1/M5), fixed TP/SL in price, max trades per day
 //   * experiment Q: the owner's M1 scalper (~20/day, TP 2-3 USD, SL
 //     1.5-2 USD) with random twins Q2/Q4. All older presets stay on M5.
+//  1.17:
+//   * mode 6 PULSE, the owner's cycle: 1B+1S probe, add 2 to the winner,
+//     trail winners, hold the loser until it is back near break-even, then
+//     cap it, trail it, add 2 to it; repeat. No trade cap, 30 USD day loss.
+//     Presets P1_Pulse and its control P2_PulseRnd (adds to a random side).
 //+------------------------------------------------------------------+
 #property copyright "TwinPulse"
-#property version   "1.16"
+#property version   "1.17"
 
 #include <Trade\Trade.mqh>
 
@@ -60,7 +65,16 @@ input int    InpMaxPositions    = 3;         // Max simultaneous positions
 input double InpMinMarginLevel  = 300.0;     // Do not open below this margin level %
 
 //--- operating mode
-input int    InpMode            = 0;         // 0=single 1=hedge 2=2+2 3=adaptive 4=adaptive-random 5=hybrid
+input int    InpMode            = 0;         // 0=single 1=hedge 2=2+2 3=adaptive 4=adaptive-random 5=hybrid 6=pulse
+//--- mode 6 "pulse": the owner's cycle (probe 1B+1S, add to the winner,
+//--- trail the winners, hold the loser until it comes back, repeat)
+input double InpPulseTrigUSD    = 1.00;      // Pulse: a side this much in profit is the winner
+input int    InpPulseAdd        = 2;         // Pulse: legs added to the winning side
+input double InpPulseTrailStart = 1.00;      // Pulse: start trailing at +this price (1.00 = 1 USD @0.01)
+input double InpPulseTrailDist  = 0.70;      // Pulse: trail distance, price
+input double InpPulseSL         = 5.00;      // Pulse: hard broker stop on EVERY leg, price (big-loss cap)
+input double InpPulseBETol      = 0.30;      // Pulse: held loser counts as "back" at >= -this USD
+input bool   InpPulseRandom     = false;     // Pulse CONTROL: add to a random side, not the winner
 input int    InpAdxPeriod       = 14;        // ADX period (market score)
 input double InpScoreStrong     = 0.60;      // |score| >= this -> 3 on one side, 0 on the other
 input double InpScoreMild       = 0.20;      // |score| >= this -> 2/1 split
@@ -165,6 +179,8 @@ enum ENUM_TP_PRESET
    TP_Q2_M1_TP2SL2_Rnd = 43,                 // Q2 = Q1 with RANDOM entry (control)
    TP_Q3_M1_TP3SL15 = 44,                    // Q3 M1 scalp: pullback, TP 3 USD, SL 1.5 USD, max 20/day
    TP_Q4_M1_TP3SL15_Rnd = 45,                // Q4 = Q3 with RANDOM entry (control)
+   TP_P1_Pulse = 46,                         // P1 owner's pulse cycle on M1, no trade limit, day loss 30
+   TP_P2_PulseRnd = 47,                      // P2 = P1 but adds to a RANDOM side (control)
   };
 
 input ENUM_TP_PRESET InpPreset = TP_CUSTOM;   // Preset: a tested variant, or custom
@@ -185,6 +201,7 @@ double   CFG_InpTP_Price;
 double   CFG_InpSL_Price;
 int      CFG_InpMaxTradesDay;
 ENUM_TIMEFRAMES g_tf = PERIOD_M5;   // the signal timeframe, set in TP_ApplyPreset
+bool     CFG_InpPulseRandom;
 bool     CFG_InpHTFFilter;
 
 string TP_PresetLabel()
@@ -236,6 +253,8 @@ string TP_PresetLabel()
       case TP_Q2_M1_TP2SL2_Rnd: return "Q2_M1_TP2SL2_Rnd";
       case TP_Q3_M1_TP3SL15: return "Q3_M1_TP3SL15";
       case TP_Q4_M1_TP3SL15_Rnd: return "Q4_M1_TP3SL15_Rnd";
+      case TP_P1_Pulse: return "P1_Pulse";
+      case TP_P2_PulseRnd: return "P2_PulseRnd";
      }
    return "custom";
   }
@@ -261,7 +280,9 @@ void TP_ApplyPreset()
    CFG_InpSL_Price = InpSL_Price;
    CFG_InpMaxTradesDay = InpMaxTradesDay;
    g_tf = InpSignalTF;
+   CFG_InpPulseRandom = InpPulseRandom;
    if(InpPreset == TP_CUSTOM) return;
+   CFG_InpPulseRandom = false;
    CFG_InpHTFFilter = false;   // only the Z presets switch it on
    CFG_InpTP_Price = 0.0;      // only the Q presets use fixed distances,
    CFG_InpSL_Price = 0.0;      // a daily trade cap and the M1 timeframe
@@ -848,9 +869,30 @@ void TP_ApplyPreset()
          else
            { CFG_InpTP_Price = 3.00; CFG_InpSL_Price = 1.50; }
          break;
+      //--- experiment P: the owner's pulse cycle. No trade limit, the
+      //--- only brake is a 30 USD day loss (stop for the day). Every leg
+      //--- has a 5 USD broker stop; trail/trigger/add use the Pulse inputs.
+      case TP_P1_Pulse:
+      case TP_P2_PulseRnd:
+         CFG_InpMaxPositions = 4;
+         CFG_InpMinMarginLevel = 300.00;
+         CFG_InpMode = 6;
+         CFG_InpEntryMode = 0;
+         CFG_InpTP_ATR = 2.00;
+         CFG_InpSL_ATR = 2.00;
+         CFG_InpTrailStart_ATR = 0.00;
+         CFG_InpTrail_ATR = 1.00;
+         CFG_InpSessionStart = 8;
+         CFG_InpSessionEnd = 20;
+         CFG_InpDailyLossUSD = 30.00;
+         CFG_InpDailyTargetUSD = 0.00;
+         CFG_InpMaxTradesDay = 0;
+         g_tf = PERIOD_M1;
+         CFG_InpPulseRandom = (InpPreset == TP_P2_PulseRnd);
+         break;
      }
 
-   PrintFormat("TwinPulseONE preset %s applied (17 config values overridden)",
+   PrintFormat("TwinPulseONE preset %s applied (18 config values overridden)",
                TP_PresetLabel());
   }
 //+------------------------------------------------------------------+
@@ -1414,7 +1456,7 @@ void TP_ManagePositions(void)
      {
       if(!PositionSelectByTicket(g_pos[i].ticket)) continue;
       if(g_pos[i].trailStart <= 0.0) continue;     // trailing off for this position
-      if(g_pos[i].atr <= 0.0) continue;
+      if(g_pos[i].trailDist <= 0.0) continue;
 
       double cur = bid;
       if(g_pos[i].side < 0) cur = ask;
@@ -1740,6 +1782,247 @@ bool TP_Open(int dir, double atr, double spread, double tpAtr)
   }
 
 //==================================================================
+//  mode 6 - PULSE: the owner's cycle
+//==================================================================
+//  IDLE    flat. On a new bar (and the usual filters) open 1 BUY + 1 SELL.
+//  PROBE   both open. The first side whose P/L reaches +InpPulseTrigUSD is
+//          the winner (CONTROL P2: a coin decides instead). Add
+//          InpPulseAdd legs to the winner and trail every winner leg.
+//  RIDE    winners trail; the loser is held. When no winner is left:
+//          loser still open -> RECOVER, nothing open -> IDLE.
+//  RECOVER only the held loser is open. When it is back to >= -BETol USD,
+//          its stop moves to about -BETol (big loss saved), it trails, and
+//          InpPulseAdd legs open on its side -> RIDE with that side as the
+//          winner. If it never comes back, its 5 USD broker stop ends it.
+//  Every leg carries InpPulseSL as a broker stop from the first moment.
+//------------------------------------------------------------------
+#define PULSE_IDLE    0
+#define PULSE_PROBE   1
+#define PULSE_RIDE    2
+#define PULSE_RECOVER 3
+
+int      g_pulseState = PULSE_IDLE;
+int      g_pulseWin   = 0;        // +1 / -1 while riding
+double   g_pulseAtr   = 0.0;      // last ATR, for the CSV only
+int      g_pulseCycles = 0;
+
+int TP_SideCount(int side)
+  {
+   int c = 0;
+   for(int i = 0; i < g_nPos; i++)
+      if(g_pos[i].side == side && PositionSelectByTicket(g_pos[i].ticket)) c++;
+   return c;
+  }
+
+//--- open one leg with a broker stop and no target; returns its slot or -1
+int TP_PulseOpenLeg(int dir, bool trail)
+  {
+   if(g_nPos >= CFG_InpMaxPositions) return -1;
+   double spread = TP_Spread();
+   if(InpMaxSpread > 0.0 && spread > InpMaxSpread) { g_skipsSpread++; return -1; }
+
+   double marginOne = 0.0;
+   if(!OrderCalcMargin(ORDER_TYPE_BUY, _Symbol, InpLots, TP_Ask(), marginOne)) return -1;
+   double eq  = AccountInfoDouble(ACCOUNT_EQUITY);
+   double lvl = (marginOne > 0.0) ? (eq / (marginOne * (g_nPos + 1)) * 100.0) : 0.0;
+   if(CFG_InpMinMarginLevel > 0.0 && lvl < CFG_InpMinMarginLevel) return -1;
+
+   double slDist  = InpPulseSL;
+   double minDist = TP_StopsLevel() + TP_Point() * 2.0;
+   if(slDist < minDist) slDist = minDist;
+
+   double lots  = TP_NormLots(InpLots);
+   double price = (dir > 0) ? TP_Ask() : TP_Bid();
+   double sl    = (dir > 0) ? price - slDist : price + slDist;
+   price = TP_NormPrice(price);
+   sl    = TP_NormPrice(sl);
+
+   g_cycle++;
+   string comment = StringFormat("%s|P%d", InpComment, g_pulseCycles);
+   bool ok = (dir > 0) ? trade.Buy(lots, _Symbol, price, sl, 0.0, comment)
+                       : trade.Sell(lots, _Symbol, price, sl, 0.0, comment);
+   if(!ok || trade.ResultRetcode() != TRADE_RETCODE_DONE)
+     {
+      TP_Log(StringFormat("pulse open failed dir=%d rc=%d", dir, trade.ResultRetcode()));
+      return -1;
+     }
+
+   TP_Sync();
+   int idx = -1;
+   datetime newest = 0;
+   for(int i = 0; i < g_nPos; i++)
+     {
+      if(g_pos[i].stopDist > 0.0) continue;
+      if(g_pos[i].openTime >= newest) { newest = g_pos[i].openTime; idx = i; }
+     }
+   if(idx < 0) return -1;
+
+   g_pos[idx].atr        = g_pulseAtr;
+   g_pos[idx].spread     = spread;
+   g_pos[idx].spreadUSD  = TP_SpreadUSD(spread, lots);
+   g_pos[idx].stopDist   = slDist;
+   g_pos[idx].trailStart = trail ? InpPulseTrailStart : 0.0;
+   g_pos[idx].trailDist  = trail ? InpPulseTrailDist  : 0.0;
+   g_pos[idx].trailOn    = false;
+
+   TP_RecountBook();
+   g_pos[idx].nBuyAtOpen  = g_nBuy;
+   g_pos[idx].nSellAtOpen = g_nSell;
+   g_rowSplit = StringFormat("%dB%dS", g_nBuy, g_nSell);
+   g_rowLegs  = g_nBuy + g_nSell;
+   g_opens++;
+   g_dayTrades++;
+
+   double fill = trade.ResultPrice();
+   if(fill <= 0.0) fill = price;
+   TP_CsvRow(TimeCurrent(), "P", dir, lots, fill, 0.0, "open", 0.0, 0.0, 0.0,
+             g_pulseAtr, spread, slDist);
+   TP_Log(StringFormat("PULSE open dir=%d fill=%.3f sl=%.3f trail=%d state=%d book=%s",
+                       dir, fill, sl, (int)trail, g_pulseState, g_rowSplit));
+   return idx;
+  }
+
+//--- switch trailing on for every open leg of one side
+void TP_PulseTrailSide(int side)
+  {
+   for(int i = 0; i < g_nPos; i++)
+     {
+      if(g_pos[i].side != side) continue;
+      g_pos[i].trailStart = InpPulseTrailStart;
+      g_pos[i].trailDist  = InpPulseTrailDist;
+     }
+  }
+
+void TP_PulseAdd(int side)
+  {
+   for(int k = 0; k < InpPulseAdd; k++)
+      if(TP_PulseOpenLeg(side, true) < 0) break;
+  }
+
+void TP_PulseProbe(void)
+  {
+   g_pulseCycles++;
+   int b = TP_PulseOpenLeg(1, false);
+   int s = TP_PulseOpenLeg(-1, false);
+   if(b < 0 && s < 0) { g_pulseState = PULSE_IDLE; return; }
+   g_pulseWin = 0;
+   g_pulseState = PULSE_PROBE;
+  }
+
+//--- move the held loser's stop to about -BETol USD from its entry
+void TP_PulseCapLoser(int side)
+  {
+   double tickSize  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double minDist   = TP_StopsLevel() + TP_Point();
+   for(int i = 0; i < g_nPos; i++)
+     {
+      if(g_pos[i].side != side) continue;
+      if(!PositionSelectByTicket(g_pos[i].ticket)) continue;
+      double lots = PositionGetDouble(POSITION_VOLUME);
+      double dist = 0.0;
+      if(tickSize > 0.0 && tickValue > 0.0 && lots > 0.0)
+         dist = InpPulseBETol / (tickValue * lots) * tickSize;
+      double want = (side > 0) ? g_pos[i].entry - dist : g_pos[i].entry + dist;
+      want = TP_NormPrice(want);
+      //only tighten, and only at a legal distance from the market
+      if(side > 0 && (want <= g_pos[i].sl || want > TP_Bid() - minDist)) continue;
+      if(side < 0 && (want >= g_pos[i].sl || want < TP_Ask() + minDist)) continue;
+      if(!TP_CanModifyNow()) return;
+      if(trade.PositionModify(g_pos[i].ticket, want, g_pos[i].tp))
+         g_pos[i].sl = want;
+     }
+  }
+
+void TP_PulseTick(void)
+  {
+   int nb = TP_SideCount(1);
+   int ns = TP_SideCount(-1);
+
+   //--- flat: whatever happened, the next cycle starts on a new bar
+   if(nb + ns == 0)
+     {
+      if(g_pulseState != PULSE_IDLE)
+         TP_Log(StringFormat("PULSE cycle %d done, day net %.2f", g_pulseCycles, g_dayNet));
+      g_pulseState = PULSE_IDLE;
+      g_pulseWin = 0;
+      return;
+     }
+
+   //--- legs found after a restart: ride whichever side is ahead
+   if(g_pulseState == PULSE_IDLE)
+     {
+      g_pulseWin = (TP_SideProfit(1) >= TP_SideProfit(-1)) ? 1 : -1;
+      TP_PulseTrailSide(g_pulseWin);
+      g_pulseState = PULSE_RIDE;
+      return;
+     }
+
+   if(g_pulseState == PULSE_PROBE)
+     {
+      //one side already stopped out: the survivor is the winner, ride it
+      if(nb == 0 || ns == 0)
+        {
+         g_pulseWin = (nb > 0) ? 1 : -1;
+         TP_PulseTrailSide(g_pulseWin);
+         g_pulseState = PULSE_RIDE;
+         return;
+        }
+      double pb = 0.0, ps = 0.0;
+      for(int i = 0; i < g_nPos; i++)
+        {
+         if(!PositionSelectByTicket(g_pos[i].ticket)) continue;
+         double p = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+         if(g_pos[i].side > 0) pb += p; else ps += p;
+        }
+      int win = 0;
+      if(pb >= InpPulseTrigUSD)      win = 1;
+      else if(ps >= InpPulseTrigUSD) win = -1;
+      if(win == 0) return;
+
+      if(CFG_InpPulseRandom)
+         win = ((int)(MathRand() % 100) < 50) ? 1 : -1;   // CONTROL
+
+      g_pulseWin = win;
+      TP_PulseTrailSide(win);
+      TP_PulseAdd(win);
+      g_pulseState = PULSE_RIDE;
+      TP_Log(StringFormat("PULSE winner=%d (buy %.2f sell %.2f)%s", win, pb, ps,
+                          CFG_InpPulseRandom ? " RANDOM" : ""));
+      return;
+     }
+
+   if(g_pulseState == PULSE_RIDE)
+     {
+      int nWin  = (g_pulseWin > 0) ? nb : ns;
+      int nLose = (g_pulseWin > 0) ? ns : nb;
+      if(nWin > 0) return;                       // winners still trailing
+      if(nLose > 0) { g_pulseState = PULSE_RECOVER; return; }
+      return;                                    // flat is handled above
+     }
+
+   if(g_pulseState == PULSE_RECOVER)
+     {
+      int lose = -g_pulseWin;
+      double back = 0.0;                         // the held side's real P/L, spread included
+      for(int i = 0; i < g_nPos; i++)
+        {
+         if(g_pos[i].side != lose) continue;
+         if(!PositionSelectByTicket(g_pos[i].ticket)) continue;
+         back += PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+        }
+      if(back < -InpPulseBETol) return;          // not back yet; the broker stop guards it
+      //the held side came back: cap it near break-even, trail it, add to it
+      TP_PulseCapLoser(lose);
+      TP_PulseTrailSide(lose);
+      TP_PulseAdd(lose);
+      g_pulseWin = lose;
+      g_pulseState = PULSE_RIDE;
+      TP_Log("PULSE loser came back - capped, trailing, added");
+     }
+  }
+
+//==================================================================
 //  the signal, once per closed M5 bar
 //==================================================================
 //--- the single-position entry rules (S1..S7)
@@ -1804,6 +2087,17 @@ void TP_OnNewBar(void)
    if(close1 <= 0.0) return;
 
    double spread = TP_Spread();
+
+   //-----------------------------------------------------------------
+   //  pulse (mode 6): a new cycle starts only from a flat book
+   //-----------------------------------------------------------------
+   if(CFG_InpMode == 6)
+     {
+      g_pulseAtr = atr;
+      if(g_pulseState == PULSE_IDLE && g_nPos == 0)
+         TP_PulseProbe();
+      return;
+     }
 
    //-----------------------------------------------------------------
    //  single-position scalp (S1..S7)
@@ -1900,6 +2194,7 @@ void TP_OnNewBar(void)
    if(wantSell > g_nSell && TP_SideAllowed(-1))
       TP_Open(-1, atr, spread, InpHedgeTarget_ATR);
   }
+
 
 //==================================================================
 //  closes
@@ -2049,7 +2344,7 @@ int OnInit(void)
 
    //mode 4 (random split) draws too: seed it as well, or the control
    //is not reproducible from run to run
-   if(CFG_InpEntryMode == 3 || CFG_InpMode == 4) MathSrand(InpRandomSeed);
+   if(CFG_InpEntryMode == 3 || CFG_InpMode == 4 || CFG_InpPulseRandom) MathSrand(InpRandomSeed);
 
    TP_LoadSessions();
    g_dayAnchor      = TP_DayStart(TimeCurrent());
@@ -2071,7 +2366,7 @@ int OnInit(void)
       g_log = FileOpen("TwinPulse_scalp.log",
                        FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_COMMON, ',', CP_ACP);
 
-   TP_Log(StringFormat("TPS 1.16 ONE start %s tf=%s preset=%s htf=%d mode=%d entry=%d lots=%.2f maxpos=%d session %d-%d tp=%.2fATR sl=%.2fATR minTP=%.1fxspread dailyTarget=%.0f dailyLoss=%.0f",
+   TP_Log(StringFormat("TPS 1.17 ONE start %s tf=%s preset=%s htf=%d mode=%d entry=%d lots=%.2f maxpos=%d session %d-%d tp=%.2fATR sl=%.2fATR minTP=%.1fxspread dailyTarget=%.0f dailyLoss=%.0f",
                        _Symbol, EnumToString(g_tf), TP_PresetLabel(), (int)CFG_InpHTFFilter, CFG_InpMode, CFG_InpEntryMode, InpLots, CFG_InpMaxPositions,
                        CFG_InpSessionStart, CFG_InpSessionEnd, CFG_InpTP_ATR, CFG_InpSL_ATR, InpMinTPxSpread,
                        CFG_InpDailyTargetUSD, CFG_InpDailyLossUSD));
@@ -2113,6 +2408,8 @@ void OnTick(void)
    //the daily stop looks at closed AND floating P/L, so it is checked on
    //every tick - not only on a new bar
    if(TP_DayLocked()) return;
+
+   if(CFG_InpMode == 6) TP_PulseTick();   // the cycle is managed on every tick
 
    datetime bar = (datetime)SeriesInfoInteger(_Symbol, g_tf, SERIES_LASTBAR_DATE);
    if(bar == 0) return;
