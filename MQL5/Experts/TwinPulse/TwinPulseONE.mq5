@@ -57,9 +57,12 @@
 //     with its random control
 //  1.19: OnTester halves split by CALENDAR time, not trade order; a pass
 //     also needs >= 2/3 of months positive and no month > 50% of the net
+//  1.20 demo-ready: default preset P1_Pulse; Friday weekend close for
+//     PULSE (InpWeekendClose, 21:00 server); status panel on the chart;
+//     a DAY SUMMARY line per day and a RUN SUMMARY on removal in the log
 //+------------------------------------------------------------------+
 #property copyright "TwinPulse"
-#property version   "1.19"
+#property version   "1.20"
 
 #include <Trade\Trade.mqh>
 
@@ -198,7 +201,10 @@ enum ENUM_TP_PRESET
    TP_P6_PulseVirtRnd = 51,                  // P6 = P5 random control
   };
 
-input ENUM_TP_PRESET InpPreset = TP_CUSTOM;   // Preset: a tested variant, or custom
+input ENUM_TP_PRESET InpPreset = TP_P1_Pulse; // Preset (default P1_Pulse = the owner's PULSE, ready for demo)
+input bool   InpWeekendClose    = true;      // Pulse: close every leg on Friday at InpWeekendHour (no weekend gap)
+input int    InpWeekendHour     = 21;        // Pulse: Friday server hour for the weekend close
+input bool   InpShowPanel       = true;      // Show the status panel on the chart
 
 int      CFG_InpMaxPositions;
 double   CFG_InpMinMarginLevel;
@@ -991,6 +997,15 @@ double   g_dayStartEquity = 0.0;
 double   g_dayNet       = 0.0;
 bool     g_dayLocked    = false;
 int      g_dayTrades    = 0;      // new trades opened today
+double   g_daySpreadSum = 0.0;    // spread paid at each open today (for the day summary)
+int      g_daySpreadN   = 0;
+int      g_runOpens     = 0;      // whole run, for the run summary (demo review)
+double   g_runNet       = 0.0;
+int      g_runDays      = 0;
+int      g_runWinDays   = 0;
+int      g_runStopDays  = 0;
+datetime g_runStart     = 0;
+datetime g_lastPanel    = 0;
 datetime g_lastCloseTry = 0;      // retry a day stop whose close-all failed
 
 int      g_cycle = 0;
@@ -1579,14 +1594,26 @@ void TP_UpdateDay(void)
   {
    datetime anchor = TP_DayStart(TimeCurrent());
    if(anchor == g_dayAnchor) return;
-   if(g_dayAnchor != 0)
-      TP_Log(StringFormat("day closed: net %.2f USD, equity %.2f",
-                          g_dayNet, AccountInfoDouble(ACCOUNT_EQUITY)));
+   if(g_dayAnchor != 0 && (g_dayTrades > 0 || g_dayNet != 0.0))
+     {
+      //one line per trading day: this is what a demo week is reviewed from
+      TP_Log(StringFormat("DAY SUMMARY %s opens=%d net=%.2f avgSpread=%.3f dayStop=%s equity=%.2f",
+                          TimeToString(g_dayAnchor, TIME_DATE), g_dayTrades, g_dayNet,
+                          (g_daySpreadN > 0) ? g_daySpreadSum / g_daySpreadN : 0.0,
+                          g_dayLocked ? "yes" : "no", AccountInfoDouble(ACCOUNT_EQUITY)));
+      g_runDays++;
+      g_runNet   += g_dayNet;
+      g_runOpens += g_dayTrades;
+      if(g_dayNet > 0.0) g_runWinDays++;
+      if(g_dayLocked && g_dayNet < 0.0) g_runStopDays++;
+     }
    g_dayAnchor      = anchor;
    g_dayStartEquity = AccountInfoDouble(ACCOUNT_EQUITY);
    g_dayNet         = 0.0;
    g_dayLocked      = false;
    g_dayTrades      = 0;
+   g_daySpreadSum   = 0.0;
+   g_daySpreadN     = 0;
   }
 
 void TP_CloseAll(string why)
@@ -1912,6 +1939,8 @@ int TP_PulseOpenLeg(int dir, bool trail)
    if(fill <= 0.0) fill = price;
    TP_CsvRow(TimeCurrent(), "P", dir, lots, fill, 0.0, "open", 0.0, 0.0, 0.0,
              g_pulseAtr, spread, slDist);
+   g_daySpreadSum += spread;
+   g_daySpreadN++;
    TP_Log(StringFormat("PULSE open dir=%d fill=%.3f sl=%.3f trail=%d state=%d book=%s",
                        dir, fill, sl, (int)trail, g_pulseState, g_rowSplit));
    return idx;
@@ -2437,6 +2466,7 @@ int OnInit(void)
 
    TP_LoadSessions();
    g_dayAnchor      = TP_DayStart(TimeCurrent());
+   g_runStart       = TimeCurrent();
    g_dayStartEquity = AccountInfoDouble(ACCOUNT_EQUITY);
    g_nPos = 0;
 
@@ -2455,7 +2485,7 @@ int OnInit(void)
       g_log = FileOpen("TwinPulse_scalp.log",
                        FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_COMMON, ',', CP_ACP);
 
-   TP_Log(StringFormat("TPS 1.19 ONE start %s tf=%s preset=%s htf=%d mode=%d entry=%d lots=%.2f maxpos=%d session %d-%d tp=%.2fATR sl=%.2fATR minTP=%.1fxspread dailyTarget=%.0f dailyLoss=%.0f",
+   TP_Log(StringFormat("TPS 1.20 ONE start %s tf=%s preset=%s htf=%d mode=%d entry=%d lots=%.2f maxpos=%d session %d-%d tp=%.2fATR sl=%.2fATR minTP=%.1fxspread dailyTarget=%.0f dailyLoss=%.0f",
                        _Symbol, EnumToString(g_tf), TP_PresetLabel(), (int)CFG_InpHTFFilter, CFG_InpMode, CFG_InpEntryMode, InpLots, CFG_InpMaxPositions,
                        CFG_InpSessionStart, CFG_InpSessionEnd, CFG_InpTP_ATR, CFG_InpSL_ATR, InpMinTPxSpread,
                        CFG_InpDailyTargetUSD, CFG_InpDailyLossUSD));
@@ -2476,6 +2506,11 @@ int OnInit(void)
 
 void OnDeinit(const int reason)
   {
+   TP_Log(StringFormat("RUN SUMMARY preset=%s from %s: %d trading days (today not included), net %.2f, "
+                       "%d winning days, %d day-loss stops, %d opens, today so far %.2f",
+                       TP_PresetLabel(), TimeToString(g_runStart, TIME_DATE), g_runDays, g_runNet,
+                       g_runWinDays, g_runStopDays, g_runOpens, g_dayNet));
+   Comment("");
    if(g_csv != INVALID_HANDLE) { FileClose(g_csv); g_csv = INVALID_HANDLE; }
    if(g_log != INVALID_HANDLE) { FileClose(g_log); g_log = INVALID_HANDLE; }
    if(hFast != INVALID_HANDLE) IndicatorRelease(hFast);
@@ -2487,12 +2522,55 @@ void OnDeinit(const int reason)
    if(hHTF  != INVALID_HANDLE) IndicatorRelease(hHTF);
   }
 
+//--- on-chart status, at most once a second
+void TP_Panel(void)
+  {
+   if(!InpShowPanel) return;
+   if(MQLInfoInteger(MQL_TESTER) && !MQLInfoInteger(MQL_VISUAL_MODE)) return;
+   if(TimeCurrent() == g_lastPanel) return;
+   g_lastPanel = TimeCurrent();
+   string st = "-";
+   if(CFG_InpMode == 6)
+     {
+      if(g_pulseState == PULSE_IDLE)         st = "IDLE (waiting for the next bar)";
+      else if(g_pulseState == PULSE_PROBE)   st = "PROBE (1B+1S, waiting for a winner)";
+      else if(g_pulseState == PULSE_RIDE)    st = StringFormat("RIDE (%s winning, trailing)", g_pulseWin > 0 ? "BUY" : "SELL");
+      else if(g_pulseState == PULSE_RECOVER) st = "RECOVER (holding the loser)";
+      else if(g_pulseState == PULSE_VPROBE)  st = "VIRTUAL PROBE";
+     }
+   Comment(StringFormat("TwinPulse %s | preset %s\n"
+                        "state: %s\n"
+                        "legs: %dB %dS   floating: %.2f\n"
+                        "today: net %.2f   opens %d   %s\n"
+                        "spread now: %.3f   day loss stop: %.0f\n"
+                        "run: %d days, net %.2f, %d winning days",
+                        "1.20", TP_PresetLabel(), st, g_nBuy, g_nSell, g_dayFloating,
+                        g_dayNet, g_dayTrades, g_dayLocked ? "STOPPED for today" : "trading",
+                        TP_Spread(), CFG_InpDailyLossUSD,
+                        g_runDays, g_runNet, g_runWinDays));
+  }
+
+//--- PULSE holds losers on purpose; never carry them over a weekend gap
+void TP_WeekendClose(void)
+  {
+   if(CFG_InpMode != 6 || !InpWeekendClose || g_nPos <= 0) return;
+   MqlDateTime d;
+   TimeToStruct(TimeCurrent(), d);
+   if(d.day_of_week != 5 || d.hour < InpWeekendHour) return;
+   if((long)TimeCurrent() - (long)g_lastCloseTry < 5) return;
+   g_lastCloseTry = TimeCurrent();
+   g_dayLocked = true;
+   TP_CloseAll("FRIDAY WEEKEND CLOSE");
+  }
+
 void OnTick(void)
   {
    TP_UpdateDay();
    TP_Sync();
    TP_RecountBook();
    TP_ManagePositions();
+   TP_WeekendClose();
+   TP_Panel();
 
    //the daily stop looks at closed AND floating P/L, so it is checked on
    //every tick - not only on a new bar
