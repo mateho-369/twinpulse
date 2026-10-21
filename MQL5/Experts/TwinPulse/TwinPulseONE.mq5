@@ -33,9 +33,15 @@
 //   * a day stop retries closing legs that a failed close-all left open
 //   * mode 4 random split is seeded (reproducible control)
 //   * experiment Z: H1 trend filter + its random twin (presets Z1..Z3)
+//  1.15:
+//   * CSV: side and reason come from the deal (DEAL_TYPE, DEAL_REASON); a
+//     leg dropped by TP_Sync before its close event is found in a recent
+//     cache. 1.13/1.14 wrote "long/stop" for every such row.
+//   * OnTester prints and saves the per-trade mean, 95% CI, win rate vs
+//     break-even and both halves; "OnTester result" = mean x 100
 //+------------------------------------------------------------------+
 #property copyright "TwinPulse"
-#property version   "1.14"
+#property version   "1.15"
 
 #include <Trade\Trade.mqh>
 
@@ -1118,10 +1124,28 @@ int TP_Idx(ulong ticket)
    return -1;
   }
 
+//--- legs that left g_pos recently. In the tester a stop/target is filled
+//--- before OnTick, OnTick's TP_Sync drops the slot, and only THEN does
+//--- OnTradeTransaction arrive - so it found no slot and every row came out
+//--- as side=long, reason=stop (1.13 run: "all 3307 trades have reason stop").
+#define TP_RECENT 32
+ScalpPos g_recent[TP_RECENT];
+int      g_recentNext = 0;
+
 void TP_RemoveIdx(int idx)
   {
+   if(idx < 0 || idx >= g_nPos) return;
+   g_recent[g_recentNext] = g_pos[idx];
+   g_recentNext = (g_recentNext + 1) % TP_RECENT;
    for(int i = idx; i < g_nPos - 1; i++) g_pos[i] = g_pos[i + 1];
    if(g_nPos > 0) g_nPos--;
+  }
+
+int TP_RecentIdx(ulong ticket)
+  {
+   for(int i = 0; i < TP_RECENT; i++)
+      if(g_recent[i].ticket == ticket && ticket != 0) return i;
+   return -1;
   }
 
 void TP_Sync(void)
@@ -1838,29 +1862,49 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
    datetime when = (datetime)HistoryDealGetInteger(trans.deal, DEAL_TIME);
    ulong posId   = HistoryDealGetInteger(trans.deal, DEAL_POSITION_ID);
 
-   int idx = TP_Idx(posId);
-   int side = 1;
+   //--- the side is a fact of the deal itself: closing with a SELL deal
+   //--- means the position was long
+   long dealType = HistoryDealGetInteger(trans.deal, DEAL_TYPE);
+   int side = (dealType == DEAL_TYPE_SELL) ? 1 : -1;
    double entryPx = price;
    double atr = 0.0, spread = 0.0, stopDist = 0.0;
-   double tp = 0.0, sl = 0.0;
    bool trailOn = false;
    string leg = "POS";
 
+   //--- find the leg: still tracked, or dropped by TP_Sync a moment ago
+   ScalpPos rec;
+   ZeroMemory(rec);
+   bool found = false;
+   int idx = TP_Idx(posId);
    if(idx >= 0)
      {
-      side     = g_pos[idx].side;
-      entryPx  = g_pos[idx].entry;
-      atr      = g_pos[idx].atr;
-      spread   = g_pos[idx].spread;
-      stopDist = g_pos[idx].stopDist;
-      tp       = g_pos[idx].tp;
-      sl       = g_pos[idx].sl;
-      trailOn  = g_pos[idx].trailOn;
-      leg      = StringFormat("E%d", CFG_InpEntryMode);
-      if(g_pos[idx].nBuyAtOpen + g_pos[idx].nSellAtOpen > 0)
+      rec = g_pos[idx];
+      found = true;
+      TP_RemoveIdx(idx);
+     }
+   else
+     {
+      int r = TP_RecentIdx(posId);
+      if(r >= 0)
         {
-         g_rowSplit = StringFormat("%dB%dS", g_pos[idx].nBuyAtOpen, g_pos[idx].nSellAtOpen);
-         g_rowLegs  = g_pos[idx].nBuyAtOpen + g_pos[idx].nSellAtOpen;
+         rec = g_recent[r];
+         found = true;
+         g_recent[r].ticket = 0;      // used once
+        }
+     }
+
+   if(found)
+     {
+      entryPx  = rec.entry;
+      atr      = rec.atr;
+      spread   = rec.spread;
+      stopDist = rec.stopDist;
+      trailOn  = rec.trailOn;
+      leg      = StringFormat("E%d", CFG_InpEntryMode);
+      if(rec.nBuyAtOpen + rec.nSellAtOpen > 0)
+        {
+         g_rowSplit = StringFormat("%dB%dS", rec.nBuyAtOpen, rec.nSellAtOpen);
+         g_rowLegs  = rec.nBuyAtOpen + rec.nSellAtOpen;
         }
       else
         {
@@ -1869,21 +1913,16 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
          g_rowSplit = StringFormat("%dB%dS", g_nBuy, g_nSell);
          g_rowLegs  = g_nBuy + g_nSell;
         }
-      TP_RemoveIdx(idx);
      }
 
-   //--- classify the exit
-   double tol = TP_Point() * 20.0;
+   //--- classify the exit from the broker's own reason, not from price
+   //--- proximity (which needed the slot that was often already gone)
+   long dr = HistoryDealGetInteger(trans.deal, DEAL_REASON);
    string reason = "close";
-   if(g_closingAll || TimeCurrent() <= g_closeAllUntil) reason = "daily_exit";
-   else if(tp > 0.0 && MathAbs(price - tp) <= tol) reason = "target";
-   else if(sl > 0.0 && MathAbs(price - sl) <= tol)
-     {
-      if(trailOn) reason = "trail";
-      else reason = "stop";
-     }
-   else if(trailOn) reason = "trail";
-   else reason = "stop";
+   if(dr == DEAL_REASON_TP)      reason = "target";
+   else if(dr == DEAL_REASON_SL) reason = trailOn ? "trail" : "stop";
+   else if(dr == DEAL_REASON_SO) reason = "stopout";
+   else if(g_closingAll || TimeCurrent() <= g_closeAllUntil) reason = "daily_exit";
 
    TP_CsvRow(when, leg, side, HistoryDealGetDouble(trans.deal, DEAL_VOLUME),
              entryPx, price, reason, profit, swap, comm, atr, spread, stopDist);
@@ -1971,7 +2010,7 @@ int OnInit(void)
       g_log = FileOpen("TwinPulse_scalp.log",
                        FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_COMMON, ',', CP_ACP);
 
-   TP_Log(StringFormat("TPS 1.14 ONE start %s preset=%s htf=%d mode=%d entry=%d lots=%.2f maxpos=%d session %d-%d tp=%.2fATR sl=%.2fATR minTP=%.1fxspread dailyTarget=%.0f dailyLoss=%.0f",
+   TP_Log(StringFormat("TPS 1.15 ONE start %s preset=%s htf=%d mode=%d entry=%d lots=%.2f maxpos=%d session %d-%d tp=%.2fATR sl=%.2fATR minTP=%.1fxspread dailyTarget=%.0f dailyLoss=%.0f",
                        _Symbol, TP_PresetLabel(), (int)CFG_InpHTFFilter, CFG_InpMode, CFG_InpEntryMode, InpLots, CFG_InpMaxPositions,
                        CFG_InpSessionStart, CFG_InpSessionEnd, CFG_InpTP_ATR, CFG_InpSL_ATR, InpMinTPxSpread,
                        CFG_InpDailyTargetUSD, CFG_InpDailyLossUSD));
@@ -2021,3 +2060,88 @@ void OnTick(void)
    TP_OnNewBar();
   }
 //+------------------------------------------------------------------+
+
+//==================================================================
+//  OnTester: the honest number, computed by the EA itself
+//==================================================================
+//--- Per closed trade, from the deal history (commission and swap included):
+//--- mean, 95% CI, win rate vs break-even, and each half of the run.
+//--- Printed to the journal, written to TwinPulse_summary_<preset>.txt in the
+//--- common Files folder, and returned as "OnTester result" (mean x 100,
+//--- so the report shows it without a CSV). No CSV parsing needed any more.
+double OnTester(void)
+  {
+   if(!HistorySelect(0, TimeCurrent())) return 0.0;
+
+   double nets[];
+   int n = 0;
+   int total = HistoryDealsTotal();
+   ArrayResize(nets, total);
+   for(int i = 0; i < total; i++)
+     {
+      ulong d = HistoryDealGetTicket(i);
+      if(d == 0) continue;
+      if(HistoryDealGetInteger(d, DEAL_MAGIC) != InpMagic) continue;
+      long e = HistoryDealGetInteger(d, DEAL_ENTRY);
+      if(e != DEAL_ENTRY_OUT && e != DEAL_ENTRY_OUT_BY) continue;
+      nets[n++] = HistoryDealGetDouble(d, DEAL_PROFIT) +
+                  HistoryDealGetDouble(d, DEAL_SWAP) +
+                  HistoryDealGetDouble(d, DEAL_COMMISSION);
+     }
+   if(n < 2)
+     {
+      PrintFormat("TPS SUMMARY preset=%s trades=%d (too few)", TP_PresetLabel(), n);
+      return 0.0;
+     }
+
+   double sum = 0.0, sq = 0.0, sumW = 0.0, sumL = 0.0;
+   int nW = 0, nL = 0;
+   for(int i = 0; i < n; i++)
+     {
+      sum += nets[i];
+      sq  += nets[i] * nets[i];
+      if(nets[i] > 0.0) { sumW += nets[i]; nW++; }
+      else              { sumL -= nets[i]; nL++; }
+     }
+   double mean = sum / n;
+   double var  = (sq - n * mean * mean) / (n - 1);
+   double ci   = (var > 0.0) ? 1.96 * MathSqrt(var / n) : 0.0;
+   double avgW = (nW > 0) ? sumW / nW : 0.0;
+   double avgL = (nL > 0) ? sumL / nL : 0.0;
+   double winPct = 100.0 * nW / n;
+   double bePct  = (avgW + avgL > 0.0) ? 100.0 * avgL / (avgW + avgL) : 0.0;
+
+   //--- the two halves, by trade order
+   int h = n / 2;
+   double m1 = 0.0, m2 = 0.0, q1 = 0.0, q2 = 0.0;
+   for(int i = 0; i < h; i++)  { m1 += nets[i]; q1 += nets[i] * nets[i]; }
+   for(int i = h; i < n; i++)  { m2 += nets[i]; q2 += nets[i] * nets[i]; }
+   int n1 = h, n2 = n - h;
+   m1 /= n1; m2 /= n2;
+   double c1 = (n1 > 1) ? 1.96 * MathSqrt(MathMax(0.0, (q1 - n1 * m1 * m1) / (n1 - 1)) / n1) : 0.0;
+   double c2 = (n2 > 1) ? 1.96 * MathSqrt(MathMax(0.0, (q2 - n2 * m2 * m2) / (n2 - 1)) / n2) : 0.0;
+
+   string verdict = "NO EDGE";
+   if(mean - ci > 0.0 && m1 > 0.0 && m2 > 0.0) verdict = "CANDIDATE (CI above 0, both halves positive)";
+   else if(mean - ci > 0.0) verdict = "CI above 0 but one half negative - unstable";
+   else if(mean + ci < 0.0) verdict = "LOSES (CI below 0)";
+
+   string line = StringFormat("TPS SUMMARY preset=%s trades=%d net=%.2f mean=%.3f CI=[%.3f, %.3f] "
+                              "win=%.1f%% breakeven=%.1f%% avgW=%.2f avgL=%.2f "
+                              "half1=%.3f[%.3f,%.3f] half2=%.3f[%.3f,%.3f] -> %s",
+                              TP_PresetLabel(), n, sum, mean, mean - ci, mean + ci,
+                              winPct, bePct, avgW, avgL,
+                              m1, m1 - c1, m1 + c1, m2, m2 - c2, m2 + c2, verdict);
+   Print(line);
+
+   int f = FileOpen("TwinPulse_summary_" + TP_PresetLabel() + ".txt",
+                    FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
+   if(f != INVALID_HANDLE)
+     {
+      FileWriteString(f, line + "\r\n");
+      FileClose(f);
+     }
+   return NormalizeDouble(mean * 100.0, 2);
+  }
+//+------------------------------------------------------------------+
+
