@@ -55,9 +55,11 @@
 //     paying for a 1B+1S probe (one spread saved, no held loser)
 //   * presets P3/P4 (spread gate 0.20) and P5/P6 (virtual + gate), each
 //     with its random control
+//  1.19: OnTester halves split by CALENDAR time, not trade order; a pass
+//     also needs >= 2/3 of months positive and no month > 50% of the net
 //+------------------------------------------------------------------+
 #property copyright "TwinPulse"
-#property version   "1.18"
+#property version   "1.19"
 
 #include <Trade\Trade.mqh>
 
@@ -2453,7 +2455,7 @@ int OnInit(void)
       g_log = FileOpen("TwinPulse_scalp.log",
                        FILE_WRITE | FILE_CSV | FILE_ANSI | FILE_COMMON, ',', CP_ACP);
 
-   TP_Log(StringFormat("TPS 1.18 ONE start %s tf=%s preset=%s htf=%d mode=%d entry=%d lots=%.2f maxpos=%d session %d-%d tp=%.2fATR sl=%.2fATR minTP=%.1fxspread dailyTarget=%.0f dailyLoss=%.0f",
+   TP_Log(StringFormat("TPS 1.19 ONE start %s tf=%s preset=%s htf=%d mode=%d entry=%d lots=%.2f maxpos=%d session %d-%d tp=%.2fATR sl=%.2fATR minTP=%.1fxspread dailyTarget=%.0f dailyLoss=%.0f",
                        _Symbol, EnumToString(g_tf), TP_PresetLabel(), (int)CFG_InpHTFFilter, CFG_InpMode, CFG_InpEntryMode, InpLots, CFG_InpMaxPositions,
                        CFG_InpSessionStart, CFG_InpSessionEnd, CFG_InpTP_ATR, CFG_InpSL_ATR, InpMinTPxSpread,
                        CFG_InpDailyTargetUSD, CFG_InpDailyLossUSD));
@@ -2519,9 +2521,11 @@ double OnTester(void)
    if(!HistorySelect(0, TimeCurrent())) return 0.0;
 
    double nets[];
+   datetime times[];
    int n = 0;
    int total = HistoryDealsTotal();
    ArrayResize(nets, total);
+   ArrayResize(times, total);
    for(int i = 0; i < total; i++)
      {
       ulong d = HistoryDealGetTicket(i);
@@ -2529,6 +2533,7 @@ double OnTester(void)
       if(HistoryDealGetInteger(d, DEAL_MAGIC) != InpMagic) continue;
       long e = HistoryDealGetInteger(d, DEAL_ENTRY);
       if(e != DEAL_ENTRY_OUT && e != DEAL_ENTRY_OUT_BY) continue;
+      times[n] = (datetime)HistoryDealGetInteger(d, DEAL_TIME);
       nets[n++] = HistoryDealGetDouble(d, DEAL_PROFIT) +
                   HistoryDealGetDouble(d, DEAL_SWAP) +
                   HistoryDealGetDouble(d, DEAL_COMMISSION);
@@ -2556,27 +2561,72 @@ double OnTester(void)
    double winPct = 100.0 * nW / n;
    double bePct  = (avgW + avgL > 0.0) ? 100.0 * avgL / (avgW + avgL) : 0.0;
 
-   //--- the two halves, by trade order
-   int h = n / 2;
+   //--- the two halves BY CALENDAR TIME (the tester window split at its
+   //--- midpoint). 1.15-1.18 split by trade order, so a burst of trades in
+   //--- one good month filled half 1 by itself and "both halves positive"
+   //--- said nothing about the rest of the year (P3 in 1.18: Jan-Feb made
+   //--- +4196 of +4194, yet both "halves" were positive).
+   datetime tFrom = times[0];
+   datetime tTo = TimeCurrent();
+   datetime tMid = (datetime)(((long)tFrom + (long)tTo) / 2);
+   int n1 = 0, n2 = 0;
    double m1 = 0.0, m2 = 0.0, q1 = 0.0, q2 = 0.0;
-   for(int i = 0; i < h; i++)  { m1 += nets[i]; q1 += nets[i] * nets[i]; }
-   for(int i = h; i < n; i++)  { m2 += nets[i]; q2 += nets[i] * nets[i]; }
-   int n1 = h, n2 = n - h;
-   m1 /= n1; m2 /= n2;
+   for(int i = 0; i < n; i++)
+     {
+      if(times[i] < tMid) { m1 += nets[i]; q1 += nets[i] * nets[i]; n1++; }
+      else                { m2 += nets[i]; q2 += nets[i] * nets[i]; n2++; }
+     }
+   if(n1 > 0) m1 /= n1;
+   if(n2 > 0) m2 /= n2;
    double c1 = (n1 > 1) ? 1.96 * MathSqrt(MathMax(0.0, (q1 - n1 * m1 * m1) / (n1 - 1)) / n1) : 0.0;
    double c2 = (n2 > 1) ? 1.96 * MathSqrt(MathMax(0.0, (q2 - n2 * m2 * m2) / (n2 - 1)) / n2) : 0.0;
 
+   //--- months: how many calendar months made money, and the best month's
+   //--- share of the total (one lucky month must not carry a "pass")
+   int months = 0, posMonths = 0;
+   double bestMonth = 0.0, curMonth = 0.0;
+   int curKey = -1;
+   for(int i = 0; i <= n; i++)
+     {
+      int key = -1;
+      if(i < n)
+        {
+         MqlDateTime md;
+         TimeToStruct(times[i], md);
+         key = md.year * 12 + md.mon;
+        }
+      if(key != curKey)
+        {
+         if(curKey >= 0)
+           {
+            months++;
+            if(curMonth > 0.0) posMonths++;
+            if(curMonth > bestMonth) bestMonth = curMonth;
+           }
+         curKey = key;
+         curMonth = 0.0;
+        }
+      if(i < n) curMonth += nets[i];
+     }
+   double bestShare = (sum > 0.0) ? 100.0 * bestMonth / sum : 0.0;
+
    string verdict = "NO EDGE";
-   if(mean - ci > 0.0 && m1 > 0.0 && m2 > 0.0) verdict = "CANDIDATE (CI above 0, both halves positive)";
-   else if(mean - ci > 0.0) verdict = "CI above 0 but one half negative - unstable";
+   bool halvesOk = (n1 > 0 && n2 > 0 && m1 - c1 > 0.0 && m2 - c2 > 0.0);
+   bool monthsOk = (months > 0 && posMonths * 3 >= months * 2 && bestShare <= 50.0);
+   if(mean - ci > 0.0 && halvesOk && monthsOk)
+      verdict = "CANDIDATE (CI>0, both calendar halves CI>0, >=2/3 months positive, best month <=50%)";
+   else if(mean - ci > 0.0 && !halvesOk) verdict = "CI above 0 but a calendar half is not - regime, not edge";
+   else if(mean - ci > 0.0 && !monthsOk) verdict = "CI above 0 but carried by few months - not consistent";
    else if(mean + ci < 0.0) verdict = "LOSES (CI below 0)";
 
    string line = StringFormat("TPS SUMMARY preset=%s trades=%d net=%.2f mean=%.3f CI=[%.3f, %.3f] "
                               "win=%.1f%% breakeven=%.1f%% avgW=%.2f avgL=%.2f "
-                              "half1=%.3f[%.3f,%.3f] half2=%.3f[%.3f,%.3f] -> %s",
+                              "half1=%.3f[%.3f,%.3f] n=%d half2=%.3f[%.3f,%.3f] n=%d "
+                              "months=%d positive=%d bestMonthShare=%.0f%% -> %s",
                               TP_PresetLabel(), n, sum, mean, mean - ci, mean + ci,
                               winPct, bePct, avgW, avgL,
-                              m1, m1 - c1, m1 + c1, m2, m2 - c2, m2 + c2, verdict);
+                              m1, m1 - c1, m1 + c1, n1, m2, m2 - c2, m2 + c2, n2,
+                              months, posMonths, bestShare, verdict);
    Print(line);
 
    int f = FileOpen("TwinPulse_summary_" + TP_PresetLabel() + ".txt",
